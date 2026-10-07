@@ -261,17 +261,26 @@ export function decodeLine(line) {
  * Binarization is the per-line midpoint between that line's min and max, which
  * is robust for a high-contrast label and costs nothing.
  *
+ * Each scan line is the average of `band` adjacent lines. Bars run across the
+ * band, so averaging keeps them, while speckle — toner dropout in the bars,
+ * shrink-wrap glints — is uncorrelated between lines and washes out. On a real
+ * wrapped label (tests/fixtures/label-wrapped-0000705.jpg) single lines decode
+ * on 1 row in 1067; a 9-line band decodes on 134.
+ *
  * @param {Uint8Array|Uint8ClampedArray} gray  w*h greyscale samples
  * @param {number} width
  * @param {number} height
  * @param {object} [opts]
  * @param {number} [opts.stride=6]        rows/columns between scan lines
+ * @param {number} [opts.band=9]         lines averaged into each scan line
  * @param {number} [opts.minContrast=40]  skip flat lines
  * @param {(text:string)=>boolean} [opts.validate] accept-first predicate
  * @returns {{text:string, orientation:'row'|'column', index:number}|null}
  */
 export function scanCode128(gray, width, height, opts = {}) {
   const stride = opts.stride ?? 6;
+  const band = Math.max(1, opts.band ?? 9);
+  const half = band >> 1;
   const minContrast = opts.minContrast ?? 40;
   const validate = opts.validate ?? (() => true);
 
@@ -299,15 +308,32 @@ export function scanCode128(gray, width, height, opts = {}) {
   };
 
   const row = new Uint8Array(width);
+  const rowSum = new Uint32Array(width);
   for (const y of centreOutOrder(height, stride)) {
-    row.set(gray.subarray(y * width, y * width + width));
+    const y0 = Math.max(0, y - half);
+    const y1 = Math.min(height - 1, y + half);
+    rowSum.fill(0);
+    for (let yy = y0; yy <= y1; yy++) {
+      const base = yy * width;
+      for (let x = 0; x < width; x++) rowSum[x] += gray[base + x];
+    }
+    const n = y1 - y0 + 1;
+    for (let x = 0; x < width; x++) row[x] = rowSum[x] / n;
     const hit = tryLine(row, 'row', y);
     if (hit) return hit;
   }
 
   const col = new Uint8Array(height);
   for (const x of centreOutOrder(width, stride)) {
-    for (let y = 0; y < height; y++) col[y] = gray[y * width + x];
+    const x0 = Math.max(0, x - half);
+    const x1 = Math.min(width - 1, x + half);
+    const n = x1 - x0 + 1;
+    for (let y = 0; y < height; y++) {
+      const base = y * width;
+      let sum = 0;
+      for (let xx = x0; xx <= x1; xx++) sum += gray[base + xx];
+      col[y] = sum / n;
+    }
     const hit = tryLine(col, 'column', x);
     if (hit) return hit;
   }
