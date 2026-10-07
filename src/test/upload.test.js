@@ -6,7 +6,7 @@
 
 import { describe, it, expect } from './runner.js';
 import { backendApiBase, maskToken } from '../core/settings.js';
-import { objectKey } from '../app/uploader.js';
+import { objectKey, planDraft } from '../app/uploader.js';
 
 const s = (backendUrl, extra = {}) => ({ backendUrl, keyPrefix: 'listings/', ...extra });
 
@@ -95,5 +95,40 @@ describe('Token masking (§7 Settings)', () => {
 
   it('reports an unset token', () => {
     expect(maskToken('')).toBe('(not set)');
+  });
+});
+
+describe('Draft planning — reshoots append to the existing draft', () => {
+  const photo = (n, status, draftId = null, updatedAt = n) => ({ dcfKey: `100CANON/IMG_${n}.JPG`, status, draftId, updatedAt });
+
+  it('sends every photo and makes a new draft the first time', () => {
+    const photos = [photo(1, 'GROUPED'), photo(2, 'GROUPED')];
+    const plan = planDraft(photos);
+    expect(plan.appendTo).toBe(null);
+    expect(plan.sending.length).toBe(2);
+  });
+
+  it('sends only the new photos, appending to the earlier draft', () => {
+    const plan = planDraft([photo(1, 'UPLOADED', '812'), photo(2, 'UPLOADED', '812'), photo(3, 'GROUPED')]);
+    expect(plan.appendTo).toBe('812');
+    expect(plan.sending.map((p) => p.dcfKey)).toEqual(['100CANON/IMG_3.JPG']);
+  });
+
+  it('appends to the most recently updated draft when there are several', () => {
+    const plan = planDraft([photo(1, 'UPLOADED', '700', 10), photo(2, 'UPLOADED', '812', 20), photo(3, 'FAILED')]);
+    expect(plan.appendTo).toBe('812');
+    expect(plan.sending.length).toBe(1);
+  });
+
+  it('has nothing to send when every photo is already in a draft', () => {
+    const plan = planDraft([photo(1, 'UPLOADED', '812')]);
+    expect(plan.appendTo).toBe('812');
+    expect(plan.sending.length).toBe(0);
+  });
+
+  it('ignores uploaded photos that never got a draft id', () => {
+    const plan = planDraft([photo(1, 'UPLOADED', null), photo(2, 'GROUPED')]);
+    expect(plan.appendTo).toBe(null);
+    expect(plan.sending.length).toBe(2);
   });
 });

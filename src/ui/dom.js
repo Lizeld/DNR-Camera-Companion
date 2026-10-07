@@ -37,9 +37,14 @@ export function result(el, content, ok = null) {
 
 /**
  * Prompt for a 7-digit SKU using the dialog in index.html.
+ *
+ * @param {number} count photos being assigned
+ * @param {object} [opts]
+ * @param {(sku:string)=>Promise<{text:string, warn?:boolean}|null>} [opts.describe]
+ *   says what a complete SKU is (e.g. the Inventory item), shown under the field
  * @returns {Promise<string|null>}
  */
-export function askSku(count) {
+export function askSku(count, { describe } = {}) {
   const dialog = $('#sku-dialog');
   const input = $('#sku-input');
   const error = $('#sku-error');
@@ -51,6 +56,23 @@ export function askSku(count) {
   error.dataset.hint ??= error.textContent;
   error.textContent = error.dataset.hint;
   error.classList.remove('is-error');
+
+  let asked = '';
+  input.oninput = async () => {
+    const value = input.value.trim();
+    error.classList.remove('is-error', 'is-warn');
+    if (!describe || !/^\d{7}$/.test(value)) {
+      asked = '';
+      error.textContent = error.dataset.hint;
+      return;
+    }
+    asked = value;
+    error.textContent = 'Looking it up…';
+    const info = await describe(value).catch(() => null);
+    if (asked !== value) return; // typed on meanwhile
+    error.textContent = info?.text ?? error.dataset.hint;
+    error.classList.toggle('is-warn', Boolean(info?.warn));
+  };
 
   return new Promise((resolve) => {
     const onClose = () => {

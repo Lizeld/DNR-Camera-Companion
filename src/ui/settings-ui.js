@@ -54,6 +54,7 @@ export function initSettings() {
   }
 
   text($('#origin-echo'), location.origin);
+  text($('#origin-echo-2'), location.origin);
   text($('#cors-origin'), location.origin);
   $('#set-discover-prefix').value = guessSubnet();
 

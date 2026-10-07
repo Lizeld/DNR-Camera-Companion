@@ -3,12 +3,16 @@
  *
  *   POST {api}/presign  { key, contentType }  -> { uploadUrl, publicUrl, key }
  *   PUT  uploadUrl      <bytes>                (presigned S3, 300s TTL)
- *   POST {api}/drafts   { sku, images[] }     -> { draftId }
+ *   POST {api}/drafts   { sku, images[], draftId? } -> { draftId, appended? }
  *
  * Idempotent per SKU: each photo's `publicUrl` is persisted the moment its PUT
  * succeeds, and the draft is built from *all* uploaded photos for that SKU, so
  * a retry after a partial failure still produces a complete draft. Local
  * copies are deleted only after the draft is confirmed.
+ *
+ * A reshoot of a SKU that already has a draft sends only the new photos plus
+ * that `draftId`, and the backend appends them. If the draft has since been
+ * published, the backend makes a new draft from the new photos instead.
  */
 
 import * as db from '../core/db.js';
@@ -121,11 +125,32 @@ export async function putToS3(uploadUrl, blob, contentType, signal) {
 }
 
 /** @returns {Promise<{draftId:string}>} */
-export async function createDraft(sku, images, s = settings.load(), signal) {
+export async function createDraft(sku, images, s = settings.load(), signal, appendTo = null) {
   const api = settings.backendApiBase(s);
-  const res = await postJson(`${api}/drafts`, { sku, images }, s, signal);
+  const body = appendTo ? { sku, images, draftId: String(appendTo) } : { sku, images };
+  const res = await postJson(`${api}/drafts`, body, s, signal);
   if (!res?.draftId) throw new UploadError('drafts response missing draftId', { body: JSON.stringify(res) });
   return res;
+}
+
+/**
+ * Decide what a SKU's /drafts call sends. Photos already in a draft (an
+ * earlier shoot of this SKU) aren't resent; the rest are appended to the most
+ * recently updated of those drafts. With no earlier draft, everything is sent
+ * and a new draft is made.
+ *
+ * @param {object[]} photos the SKU's photos, REVIEW excluded
+ * @returns {{appendTo:string|null, sending:object[]}}
+ */
+export function planDraft(photos) {
+  const earlier = photos
+    .filter((p) => p.status === db.STATUS.UPLOADED && p.draftId)
+    .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+  const appendTo = earlier[0]?.draftId ?? null;
+  return {
+    appendTo,
+    sending: appendTo ? photos.filter((p) => p.status !== db.STATUS.UPLOADED) : photos,
+  };
 }
 
 /**
@@ -207,16 +232,25 @@ export async function uploadSku(sku, opts = {}) {
     );
   }
 
-  const images = current
+  const { appendTo, sending } = planDraft(current);
+  if (appendTo && sending.length === 0) {
+    log.info(`SKU ${sku}: every photo is already in draft ${appendTo}`);
+    fire('upload:done', { sku, draftId: appendTo, images: 0 });
+    return { sku, draftId: appendTo, uploaded: 0, skipped: current.length };
+  }
+
+  const images = sending
     .slice()
     .sort((a, b) => (a.sequenceNumber ?? 0) - (b.sequenceNumber ?? 0))
     .map((p) => p.publicUrl);
 
-  const { draftId } = await createDraft(sku, images, s, signal);
-  log.success(`Draft created for SKU ${sku} (${images.length} images)`, draftId);
+  const { draftId, appended } = await createDraft(sku, images, s, signal, appendTo);
+  if (appended) log.success(`Added ${images.length} photo(s) to the existing draft for SKU ${sku}`, draftId);
+  else if (appendTo) log.success(`Draft ${appendTo} for SKU ${sku} is no longer open — created a new draft (${images.length} images)`, draftId);
+  else log.success(`Draft created for SKU ${sku} (${images.length} images)`, draftId);
 
   // Only now is it safe to drop local copies (§4).
-  for (const p of current) {
+  for (const p of sending) {
     await blobstore.remove(p.opfsPath);
     await db.updatePhoto(p.dcfKey, {
       status: db.STATUS.UPLOADED,
@@ -230,7 +264,7 @@ export async function uploadSku(sku, opts = {}) {
   fire('upload:done', { sku, draftId, images: images.length });
   fire('photos:changed', { reason: 'upload', sku });
 
-  return { sku, draftId, uploaded, skipped: current.length - uploaded };
+  return { sku, draftId, appended: Boolean(appended), uploaded, skipped: current.length - uploaded };
 }
 
 // ---- serial upload queue -------------------------------------------------

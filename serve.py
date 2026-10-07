@@ -243,8 +243,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     # -- backend proxy ----------------------------------------------------
 
     def do_GET(self):
-        if self.path.split("?", 1)[0] == f"{PROXY_PREFIX}/config":
+        path = self.path.split("?", 1)[0]
+        if path == f"{PROXY_PREFIX}/config":
             return self._proxy_config()
+        # Read-only companion lookups (token check, SKU, draft state). Only this
+        # namespace: the proxy is for the watermark API, not the whole site.
+        if path.startswith(f"{PROXY_PREFIX}/api/watermark/"):
+            return self._proxy_get(path[len(f"{PROXY_PREFIX}/api/"):])
         super().do_GET()
 
     def do_POST(self):
@@ -337,6 +342,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if status == 200 and "json" in content_type.lower():
             payload = proxy.rewrite_upload_url(payload)
         self.log_message("proxy POST %s -> %s %s", endpoint, status, url)
+        self._send_bytes(status, payload, content_type)
+
+    def _proxy_get(self, endpoint: str):
+        proxy = PROXY
+        if proxy is None:
+            return self._proxy_disabled()
+        if ".." in endpoint or not re.fullmatch(r"[A-Za-z0-9_\-/]+", endpoint):
+            return self._send_json(400, {"error": "bad_endpoint", "message": f"refusing to proxy {self.path!r}"})
+        headers = {}
+        if self.headers.get("Authorization"):
+            headers["Authorization"] = self.headers["Authorization"]
+        url = f"{proxy.upstream}/{endpoint}"
+        status, payload, content_type = proxy.forward("GET", url, None, headers, JSON_TIMEOUT_SECONDS)
+        self.log_message("proxy GET %s -> %s %s", endpoint, status, url)
         self._send_bytes(status, payload, content_type)
 
     def _proxy_s3(self):

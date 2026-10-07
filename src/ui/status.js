@@ -39,6 +39,29 @@ let lastFlushAt = null;
 let flashTimer = null;
 
 /**
+ * Non-blocking read of a cached lookup: returns the last value (or undefined)
+ * at once, and refreshes in the background when older than `ttl`, re-rendering
+ * the parts list when the answer lands. Inventory lookups are decoration —
+ * the list must never wait on the network.
+ */
+const peeked = new Map(); // key -> {at, value, loading}
+function peek(key, ttl, load) {
+  const hit = peeked.get(key);
+  if ((!hit || Date.now() - hit.at > ttl) && !hit?.loading) {
+    peeked.set(key, { at: hit?.at ?? 0, value: hit?.value, loading: true });
+    load()
+      .catch(() => null)
+      .then((value) => {
+        peeked.set(key, { at: Date.now(), value, loading: false });
+        scheduleParts();
+      });
+  }
+  return hit?.value;
+}
+
+const ANALYSIS_PENDING = new Set(['queued', 'running']);
+
+/**
  * @param {object} opts
  * @param {(tab:string, opts?:object)=>void} opts.navigate switch tabs (from main.js)
  */
@@ -382,16 +405,33 @@ function renderLive() {
   // A new SKU: celebrate briefly so the operator knows the label was read.
   if (snap.lastSkuAt && snap.lastSkuAt !== lastFlushAt) {
     lastFlushAt = snap.lastSkuAt;
-    if (Date.now() - snap.lastSkuAt < 10000) flash(`Label read: SKU ${snap.lastSku}. Start the next part.`);
+    if (Date.now() - snap.lastSkuAt < 10000) void announceSku(snap.lastSku, snap.lastSkuAt);
   }
 }
 
-function flash(message) {
+function flash(message, tone = 'ok') {
   const el = $('#live-flash');
-  text(el, `✓ ${message}`);
+  text(el, `${tone === 'ok' ? '✓' : '!'} ${message}`);
+  el.classList.toggle('flash-warn', tone !== 'ok');
   show(el, true);
   clearTimeout(flashTimer);
-  flashTimer = setTimeout(() => show(el, false), 6000);
+  flashTimer = setTimeout(() => show(el, false), tone === 'ok' ? 6000 : 12000);
+}
+
+/** Confirm a read label, then say what it is — or that Inventory doesn't know it. */
+async function announceSku(sku, at) {
+  flash(`Label read: SKU ${sku}. Start the next part.`);
+  const lookup = await inventory.lookupSku(sku);
+  if (lastFlushAt !== at || !lookup) return; // superseded, or Inventory unreachable
+  const what = inventory.describeItem(lookup);
+  if (lookup.item) {
+    flash(`Label read: SKU ${sku}${what ? ` — ${what}` : ''}. Start the next part.`);
+  } else {
+    flash(
+      `SKU ${sku} isn't in Inventory yet — check the label was read correctly. If it's right, a new item is created.`,
+      'warn',
+    );
+  }
 }
 
 let stripScheduled = false;
@@ -520,7 +560,17 @@ async function partRow({ sku, photos, at }) {
   const meta = document.createElement('div');
   meta.className = 'part-meta';
   meta.textContent = `${photos.length} photo${photos.length === 1 ? '' : 's'} · ${relativeTime(at)}`;
-  body.append(title, meta);
+  body.append(title);
+
+  const lookup = peek(`sku:${sku}`, 5 * 60 * 1000, () => inventory.lookupSku(sku));
+  if (lookup) {
+    const item = document.createElement('div');
+    const what = inventory.describeItem(lookup);
+    item.className = lookup.item ? 'part-item' : 'part-item is-unknown';
+    item.textContent = lookup.item ? what ?? 'In Inventory (no title yet)' : 'Not in Inventory yet — check the SKU';
+    body.append(item);
+  }
+  body.append(meta);
   if (state.kind === 'failed' && state.error) {
     const err = document.createElement('div');
     err.className = 'part-error';
@@ -535,6 +585,20 @@ async function partRow({ sku, photos, at }) {
   chip.className = `status-chip chip-${state.kind}`;
   chip.textContent = state.kind === 'done' ? `✓ ${state.label}` : state.label;
   status.append(chip);
+  if (state.kind === 'done' && state.draftId) {
+    const pending = (v) => v && ANALYSIS_PENDING.has(v.analysis?.status);
+    const key = `draft:${state.draftId}`;
+    const ttl = pending(peeked.get(key)?.value) ? 20 * 1000 : 5 * 60 * 1000;
+    const draft = peek(key, ttl, () => inventory.draftInfo(state.draftId, { fresh: true }));
+    const note = draftNote(draft);
+    if (note) {
+      const el = document.createElement('div');
+      el.className = `part-note ${note.tone ?? ''}`;
+      el.textContent = note.text;
+      if (note.title) el.title = note.title;
+      status.append(el);
+    }
+  }
   if (state.kind === 'uploading' && state.progress?.total) {
     const bar = document.createElement('div');
     bar.className = 'progress progress-thin';
@@ -574,6 +638,26 @@ async function partRow({ sku, photos, at }) {
 
   row.append(thumb, body, status, actions);
   return row;
+}
+
+/** One line on what Inventory has done with an uploaded draft since. */
+function draftNote(draft) {
+  if (!draft) return null;
+  if (!draft.isDraft) return { text: 'Listed', tone: 'is-ok' };
+  const found = [draft.partNumber && `PN ${draft.partNumber}`, draft.price != null && `$${draft.price}`]
+    .filter(Boolean)
+    .join(' · ');
+  switch (draft.analysis?.status) {
+    case 'queued':
+    case 'running':
+      return { text: 'Analyzing photos…' };
+    case 'done':
+      return { text: found ? `Analyzed · ${found}` : 'Analyzed', tone: 'is-ok' };
+    case 'failed':
+      return { text: 'Analysis failed', tone: 'is-warn', title: draft.analysis.error ?? '' };
+    default:
+      return found ? { text: found } : null;
+  }
 }
 
 // ---- counters (technical details) ---------------------------------------------

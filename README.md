@@ -292,6 +292,17 @@ is built from *all* uploaded photos for the SKU — so a retry after a partial
 failure completes the set rather than creating a short draft. Local bytes are
 deleted only after the draft is confirmed.
 
+The backend makes the rest of it safe (DNR-Inventory `routes/watermark.js`):
+`/presign` appends a random suffix to the key, because Canon file numbers wrap
+at 9999 and a bare `listings/IMG_0017.JPG` would overwrite an older listing's
+photo; and `/drafts` returns the existing draft when the same image keys arrive
+twice, so a retry after a lost response can't create a duplicate.
+
+**Reshoots append.** If a SKU already has photos in a draft, a later shoot of the
+same SKU sends only the new photos plus that `draftId`, and the backend adds them
+to the draft (`planDraft()` in `uploader.js`). If the draft has been published
+in the meantime, the backend makes a new draft instead.
+
 Both §4 traps are handled in `settings.backendApiBase()`: the `/api` prefix is
 forced (root paths are the SPA and return nginx 405) and the scheme is forced to
 `https` (an `http://` base 301-redirects and fetch downgrades POST to GET,
@@ -324,9 +335,10 @@ not enforce CORS.** This is new ground for the web port, not a regression.
 `Access-Control-Allow-Credentials: true` is set upstream, so a `*` wildcard is
 not an option there; the origin has to be named. Two ways out:
 
-**Fix it upstream** — add the LAN origin to the backend's CORS list *and* the
-bucket's, and give the serving PC a DHCP reservation so the origin stays put.
-Correct, but it is a change on someone else's box and it goes stale.
+**Fix it upstream** — set `WATERMARK_APP_ORIGINS=http://<lan-ip>:8000` on the
+Inventory backend (it allows those origins, without credentials, on the
+watermark endpoints only), add the same origin to the bucket's CORS rules, and
+give the serving PC a DHCP reservation so the origin stays put.
 
 **Or proxy it** (`--backend`), which needs nothing from either:
 
@@ -354,6 +366,18 @@ Notes on the proxy worth knowing:
 - Redirects are never followed (§4 trap 2): a 301 is reported as a 301 rather
   than being silently downgraded to a GET.
 - `GET /backend/config` reports what is proxied and where it goes.
+- `GET /backend/api/watermark/*` (token check, SKU lookup, draft status) is
+  proxied too — read-only, and nothing else of the site is reachable through it.
+
+### Inventory lookups
+
+The Shoot tab asks the backend, best effort and cached, what each SKU is
+(`GET /api/watermark/skus/:sku` — item title and car, or "not in Inventory",
+which usually means a misread label) and how each uploaded draft is doing
+(`GET /api/watermark/drafts/:id` — OpenClaw analysis, part number, price). They
+have their own rate-limit budget on the backend, so they can't starve uploads,
+and nothing in the shooting flow waits on them. **Open in Inventory** links go to
+`<site>/listings?id=<draftId>`.
 
 ### Foreground-only (§5.2)
 

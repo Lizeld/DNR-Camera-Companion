@@ -12,6 +12,7 @@ import * as db from '../core/db.js';
 import * as blobstore from '../core/blobstore.js';
 import * as uploader from '../app/uploader.js';
 import { orchestrator } from '../app/orchestrator.js';
+import * as inventory from '../app/inventory.js';
 import { on as onBus, log, relativeTime, formatBytes } from '../core/log.js';
 
 /** What each pipeline status means to the operator. */
@@ -207,12 +208,24 @@ function selected() {
 async function onGroup() {
   const keys = selected().map((p) => p.dcfKey);
   if (keys.length === 0) return;
-  const sku = await askSku(keys.length);
+  const sku = await askSku(keys.length, { describe: describeSku });
   if (!sku) return;
   await orchestrator.manualGroup(keys, sku);
   selection.clear();
   toast(`${keys.length} photo(s) assigned to SKU ${sku} — press Upload to send them`, 'ok');
   await render();
+}
+
+/** What the SKU dialog shows for a complete SKU. */
+async function describeSku(sku) {
+  const lookup = await inventory.lookupSku(sku);
+  if (!lookup) return null; // Inventory unreachable — say nothing rather than guess
+  if (!lookup.item) return { text: `${sku} isn't in Inventory yet — a new item will be created. Double-check the number.`, warn: true };
+  const what = inventory.describeItem(lookup);
+  const drafts = lookup.drafts?.length ?? 0;
+  return {
+    text: `✓ ${what ?? 'In Inventory'}${drafts ? ` · ${drafts} open draft${drafts === 1 ? '' : 's'}` : ''}`,
+  };
 }
 
 async function onUpload() {

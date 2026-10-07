@@ -269,7 +269,8 @@
           frontend (405), and an <code>http://</code> address redirects POST into GET (§4).
           Enter <code>/backend</code> as the site address to route uploads through this server's proxy
           (<code>python serve.py --backend &lt;url&gt;</code>); it avoids needing CORS grants from the
-          site and the bucket.
+          site and the bucket. To upload directly instead, add <code id="origin-echo-2"></code> to the
+          site's <code>WATERMARK_APP_ORIGINS</code> and to the bucket's CORS rules.
         </p>
       </div>
       <div class="field">
