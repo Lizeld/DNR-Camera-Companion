@@ -61,6 +61,22 @@ describe('Code 128 round trip', () => {
     }
   });
 
+  it('reads SKU 0000706 — a data symbol plus the next bar can pass for a stop', () => {
+    // The B-set '6' (223112) followed by the check symbol's leading bar fits
+    // the stop pattern (2331112) within tolerance. Treating that as the end
+    // failed the checksum and abandoned the line, on every row of a real label.
+    expect(decodeLine(lineFor('0000706'))).toContain('0000706');
+  });
+
+  it('reads every SKU in a 0000000–0002999 sweep', () => {
+    const missed = [];
+    for (let n = 0; n < 3000; n++) {
+      const sku = String(n).padStart(7, '0');
+      if (!decodeLine(lineFor(sku)).includes(sku)) missed.push(sku);
+    }
+    expect(missed.length).toBe(0, `unreadable: ${missed.slice(0, 10).join(', ')}${missed.length > 10 ? '…' : ''}`);
+  });
+
   it('handles even digit counts (pure subset C)', () => {
     expect(decodeLine(lineFor('123456'))).toContain('123456');
     expect(decodeLine(lineFor('00'))).toContain('00');

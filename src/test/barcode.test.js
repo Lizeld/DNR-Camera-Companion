@@ -115,6 +115,13 @@ describe('Real label under shrink-wrap (production regression)', () => {
     expect(result.sku).toBe('0000705');
   });
 
+  it('reads SKU 0000706 (false stop-pattern match, see code128.test.js)', async () => {
+    const photo = await loadFixture('label-wrapped-0000706.jpg');
+    const result = await detectSku(photo);
+    photo.close();
+    expect(result.sku).toBe('0000706');
+  });
+
   it('is only readable because scan lines are band-averaged', async () => {
     // Documents the cause: one-pixel scan lines decode on a single row here,
     // which the default 6-row stride steps straight over.

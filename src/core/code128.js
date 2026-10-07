@@ -164,31 +164,41 @@ export function symbolsToText(startValue, values) {
 
 /**
  * Left-to-right decode beginning at run index `i` (must be a bar).
- * @returns {string|null}
+ *
+ * The stop pattern is ambiguous: a data symbol plus the following bar can fit
+ * it within tolerance (SKU 0000706: the B-set '6', 223112, then a 2-module bar
+ * passes for 2331112). Ending there either fails the checksum — losing the
+ * line — or, about 1 time in 103, passes it and yields a truncated code
+ * (0000469 read as 000046). So a stop match is recorded as one candidate and
+ * the read continues as data; every complete, checksum-valid reading comes
+ * back, longest first, for the caller's validator to choose from.
+ *
+ * @returns {string[]}
  */
 function decodeForwardAt(runs, i) {
   const startValue = matchPattern(runs, i, 6, DATA_PATTERNS, 11);
-  if (!isStartValue(startValue)) return null;
+  if (!isStartValue(startValue)) return [];
 
+  const found = [];
   const values = [];
   let p = i + 6;
 
   for (;;) {
-    // Test the stop pattern first: its leading six elements can otherwise be
-    // mistaken for a data symbol.
-    if (p + 7 <= runs.length && matchPattern(runs, p, 7, [STOP_PATTERN], 13) === 0) {
-      if (values.length < 1) return null;
-      const check = values.pop();
-      if (check !== checksum(startValue, values)) return null;
-      return symbolsToText(startValue, values);
+    if (values.length >= 1 && p + 7 <= runs.length && matchPattern(runs, p, 7, [STOP_PATTERN], 13) === 0) {
+      const data = values.slice(0, -1);
+      if (values[values.length - 1] === checksum(startValue, data)) {
+        const text = symbolsToText(startValue, data);
+        if (text) found.push(text);
+      }
     }
 
-    if (p + 6 > runs.length || values.length >= MAX_SYMBOLS) return null;
+    if (p + 6 > runs.length || values.length >= MAX_SYMBOLS) break;
     const v = matchPattern(runs, p, 6, DATA_PATTERNS, 11);
-    if (v < 0 || isStartValue(v)) return null;
+    if (v < 0 || isStartValue(v)) break;
     values.push(v);
     p += 6;
   }
+  return found.reverse();
 }
 
 /**
@@ -246,7 +256,7 @@ export function decodeLine(line) {
 
   const results = [];
   for (let i = barParity; i + 6 <= runs.length; i += 2) {
-    for (const text of [decodeForwardAt(runs, i), decodeReverseAt(runs, i)]) {
+    for (const text of [...decodeForwardAt(runs, i), decodeReverseAt(runs, i)]) {
       if (text !== null && text !== '' && !results.includes(text)) results.push(text);
     }
   }
