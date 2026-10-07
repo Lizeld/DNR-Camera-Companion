@@ -13,6 +13,31 @@ import * as imaging from './app/imaging-client.js';
 import { loadWatermark } from './app/watermark-asset.js';
 import * as blobstore from './core/blobstore.js';
 import { log } from './core/log.js';
+import * as settings from './core/settings.js';
+
+/**
+ * Settings live in this browser, per origin, so a new device (or a new URL)
+ * starts blank. serve.py already knows the camera and whether it proxies
+ * uploads — adopt those for any blank field. The token is never on the server.
+ */
+async function adoptServerDefaults() {
+  const s = settings.load();
+  if (s.cameraUrl && s.backendUrl) return;
+  let config;
+  try {
+    const res = await fetch('/backend/config', { cache: 'no-store' });
+    if (!res.ok) return;
+    config = await res.json();
+  } catch {
+    return; // not served by serve.py
+  }
+  const patch = {};
+  if (!s.cameraUrl && config?.camera) patch.cameraUrl = config.camera;
+  if (!s.backendUrl && config?.proxy) patch.backendUrl = '/backend';
+  if (Object.keys(patch).length === 0) return;
+  settings.save(patch);
+  log.info(`Filled in from the server: ${Object.keys(patch).join(', ')}`);
+}
 
 const SHOWN = {
   gallery: onGalleryShown,
@@ -65,6 +90,7 @@ function initDialogs() {
 async function boot() {
   log.info('DNR Camera Companion starting');
 
+  await adoptServerDefaults();
   initTabs();
   initDialogs();
   initStatus({ navigate });

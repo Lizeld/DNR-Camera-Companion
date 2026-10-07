@@ -104,6 +104,7 @@ MAX_BODY_BYTES = 512 * 1024 * 1024
 
 # Set in main() when --backend is given; read by every Handler instance.
 PROXY: BackendProxy | None = None
+CAMERA: str | None = None  # the camera this server keeps CORS alive for, if any
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -308,10 +309,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         })
 
     def _proxy_config(self):
-        """Diagnostics: what the app should be pointed at, and where it goes."""
+        """What the app should be pointed at, and where it goes. A fresh browser
+        uses `camera` and `api` to pre-fill its blank settings."""
         if PROXY is None:
-            return self._send_json(200, {"proxy": False, "api": None, "upstream": None})
+            return self._send_json(200, {"proxy": False, "api": None, "upstream": None, "camera": CAMERA})
         self._send_json(200, {
+            "camera": CAMERA,
             "proxy": True,
             "api": f"{PROXY_PREFIX}/api",
             "upstream": PROXY.upstream,
@@ -495,6 +498,8 @@ def main(argv: list[str]) -> int:
 
     config = load_config()
     camera = None if args.no_camera else (args.camera or config.get("camera"))
+    global CAMERA
+    CAMERA = camera
     if args.camera and args.camera != config.get("camera"):
         config["camera"] = args.camera
         save_config(config)
