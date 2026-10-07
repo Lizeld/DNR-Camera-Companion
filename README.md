@@ -45,7 +45,9 @@ details*, and everything beyond the essentials under *Settings → Advanced*.
 Test suite: `http://<lan-ip>:8000/tests.html` — 143 tests, ~2s.
 
 Requirements: Python 3.9+ with Pillow (fixtures/golden image only). The app
-itself has **no build step and no dependencies** — plain ES modules.
+itself has **no build step and no dependencies** — plain ES modules. Optional:
+`sudo apt install tesseract-ocr` on the serving PC enables the label OCR
+fallback (below); `serve.py` prints whether it found it.
 
 ---
 
@@ -252,6 +254,19 @@ One subtlety worth recording: a right-to-left scan is **not** a reversed run
 list fed back through the forward decoder — reversing flips the element order
 inside every symbol too. The reverse path matches a reversed pattern table and
 walks stop → start.
+
+### Label OCR fallback
+
+When a barcode won't decode, the scanner still reports its best *partial* read
+(a start pattern plus at least two symbols). That marks the photo as a label:
+the worker crops the bars and the digits under them, both ways up, and
+`serve.py` runs Tesseract on each crop (`POST /ocr/sku`, digits only). OCR has
+no checksum and an upside-down label reads as other plausible digits
+(`0000706` → `9020000`), so a number is only used when Inventory knows that
+SKU — then the part is filed exactly as if the barcode had read. Otherwise the
+Shoot tab asks *"Which SKU is on this label?"* with a button per reading. It
+costs ~1–2 s, and only on photos that half-read as a barcode; ordinary photos
+never reach it. Off switch: Settings → Advanced.
 
 ### Ingest loop (§6.1)
 

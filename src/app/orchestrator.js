@@ -26,6 +26,7 @@ import * as blobstore from '../core/blobstore.js';
 import * as settings from '../core/settings.js';
 import * as imaging from './imaging-client.js';
 import * as uploader from './uploader.js';
+import * as ocr from './ocr.js';
 import { log, fire } from '../core/log.js';
 
 export const CONNECTION = Object.freeze({
@@ -397,8 +398,33 @@ export class Orchestrator {
       options: {
         padding: s.watermarkPadding,
         jpegQuality: s.jpegQuality / 100,
+        ocr: await ocr.available(),
       },
     });
+
+    // The barcode didn't decode but the photo looks like a label: read the
+    // printed number. Before the reducer sees this photo, so ordering holds.
+    let sku = result.sku;
+    if (!sku && result.ocrCrops?.length) {
+      const startedOcr = performance.now();
+      const read = await ocr.identify(result.ocrCrops);
+      const ms = Math.round(performance.now() - startedOcr);
+      if (read?.confirmed) {
+        sku = read.sku;
+        log.success(
+          `${item.dcfKey}: barcode unreadable — read SKU ${sku} from the printed number`,
+          `${read.what ?? 'in Inventory'} · OCR ${ms}ms`,
+        );
+      } else if (read) {
+        log.warn(
+          `${item.dcfKey}: printed number reads as ${read.candidates.join(' or ')}, which Inventory doesn't know — asking`,
+          `OCR ${ms}ms`,
+        );
+        fire('ocr:unconfirmed', { dcfKey: item.dcfKey, candidates: read.candidates });
+      } else {
+        log.debug(`${item.dcfKey}: looked like a label (${result.ocrSymbols} symbols) but no number was read`, `OCR ${ms}ms`);
+      }
+    }
 
     const opfsPath = await blobstore.put(item.dcfKey, result.jpeg);
 
@@ -434,7 +460,7 @@ export class Orchestrator {
       type: 'PHOTO',
       dcfKey: item.dcfKey,
       sequence: item.sequence,
-      sku: result.sku,
+      sku,
     }, item.sourcePath);
 
     fire('photos:changed', { reason: 'ingest', dcfKey: item.dcfKey });
@@ -596,6 +622,22 @@ export class Orchestrator {
     fire('grouping:changed', this.snapshot());
     fire('photos:changed', { reason: 'manual-group', sku });
     return sku;
+  }
+
+  /**
+   * File the pending photos up to and including `dcfKey` under `sku` — the
+   * operator confirming a label the OCR fallback read but Inventory didn't
+   * know. Photos taken after the label (the next part) stay pending.
+   * @returns {number} photos filed, 0 if the label photo is no longer pending
+   */
+  async fileThrough(dcfKey, sku) {
+    const pending = this.groupingState.pending;
+    const end = pending.indexOf(dcfKey);
+    if (end < 0) return 0;
+    const keys = pending.slice(0, end + 1);
+    await this.manualGroup(keys, sku);
+    if (settings.load().autoUpload) uploader.enqueueSku(sku);
+    return keys.length;
   }
 
   /** Clear the pending group without uploading (operator escape hatch). */

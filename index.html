@@ -63,6 +63,18 @@
       <button id="open-review" class="btn btn-small">Sort them out</button>
     </div>
 
+    <div id="ocr-banner" class="banner banner-warn" hidden>
+      <div>
+        <strong>Which SKU is on this label?</strong>
+        The barcode couldn't be read, so the printed number was read instead — but Inventory
+        doesn't have <span id="ocr-what">it</span>. Check the label, then file the part under the right number.
+      </div>
+      <div class="banner-actions">
+        <span id="ocr-choices" class="banner-actions"></span>
+        <button id="ocr-reject" class="btn btn-ghost btn-small">Neither</button>
+      </div>
+    </div>
+
     <!-- Shown while stopped: what to do, and whether setup is complete. -->
     <div id="ready-card" class="hero">
       <h1 id="ready-title" class="hero-title">Ready to shoot</h1>
@@ -330,6 +342,7 @@
         can't merge two parts into one draft.
       </p>
       <div class="field">
+        <label class="check"><input type="checkbox" id="set-ocr"> If a barcode won't scan, read the printed SKU number instead (needs Tesseract on the server)</label>
         <label class="check"><input type="checkbox" id="set-verbose"> Verbose errors</label>
         <label class="check"><input type="checkbox" id="set-wakelock"> Keep the screen awake while shooting</label>
         <label class="check"><input type="checkbox" id="set-notifications"> Desktop notifications (while this screen is open)</label>
@@ -371,7 +384,7 @@
     <dt>"Camera not reachable"</dt>
     <dd>Check the camera is on and its Wi-Fi is connected, and that this device is on the same Wi-Fi. If the camera went to sleep, half-press the shutter.</dd>
     <dt>"Photos need a SKU"</dt>
-    <dd>The label wasn't read. Open <b>Photos → Needs SKU</b>, select that part's photos, choose <b>Assign SKU</b>, type the 7-digit number, then <b>Upload</b>.</dd>
+    <dd>The label wasn't read — not even its printed number. Open <b>Photos → Needs SKU</b>, select that part's photos, choose <b>Assign SKU</b>, type the 7-digit number, then <b>Upload</b>.</dd>
     <dt>"Didn't reach Inventory"</dt>
     <dd>Press <b>Retry</b>. Nothing is lost — photos stay on this device until Inventory has them. If it keeps failing, check the internet connection, then <b>Settings → Inventory uploads → Test</b>.</dd>
     <dt>I switched away from this screen</dt>

@@ -173,9 +173,11 @@ export function symbolsToText(startValue, values) {
  * the read continues as data; every complete, checksum-valid reading comes
  * back, longest first, for the caller's validator to choose from.
  *
+ * @param {{symbols:number, from:number, to:number}} [partial] best partial read
+ *   so far (symbols matched incl. the start, and its run span), updated in place
  * @returns {string[]}
  */
-function decodeForwardAt(runs, i) {
+function decodeForwardAt(runs, i, partial) {
   const startValue = matchPattern(runs, i, 6, DATA_PATTERNS, 11);
   if (!isStartValue(startValue)) return [];
 
@@ -198,6 +200,12 @@ function decodeForwardAt(runs, i) {
     values.push(v);
     p += 6;
   }
+  if (partial && values.length + 1 > partial.symbols) {
+    partial.symbols = values.length + 1;
+    partial.from = i;
+    partial.to = p;
+    partial.reverse = false;
+  }
   return found.reverse();
 }
 
@@ -207,16 +215,24 @@ function decodeForwardAt(runs, i) {
  * reversed table and the symbol stream comes out back to front.
  * @returns {string|null}
  */
-function decodeReverseAt(runs, i) {
+function decodeReverseAt(runs, i, partial) {
   if (matchPattern(runs, i, 7, [REV_STOP_PATTERN], 13) !== 0) return null;
 
   const reversedStream = []; // [check, sym_n, ..., sym_1, start]
   let p = i + 7;
+  const note = () => {
+    if (partial && reversedStream.length + 1 > partial.symbols) {
+      partial.symbols = reversedStream.length + 1;
+      partial.from = i;
+      partial.to = p;
+      partial.reverse = true;
+    }
+  };
 
   for (;;) {
-    if (p + 6 > runs.length || reversedStream.length >= MAX_SYMBOLS) return null;
+    if (p + 6 > runs.length || reversedStream.length >= MAX_SYMBOLS) return note(), null;
     const v = matchPattern(runs, p, 6, REV_DATA_PATTERNS, 11);
-    if (v < 0) return null;
+    if (v < 0) return note(), null;
     p += 6;
 
     if (isStartValue(v)) {
@@ -234,9 +250,15 @@ function decodeReverseAt(runs, i) {
  * Decode a single binarized scan line.
  *
  * @param {Uint8Array|number[]} line 1 = dark, 0 = light
+ * @param {object} [partial] when given and nothing decodes, receives the best
+ *   partial read: `{symbols, x0, x1, reverse}` — symbols matched in a row from
+ *   a start (or, for an upside-down label, a reversed stop) pattern, and the
+ *   pixel span they cover. A label the
+ *   decoder can't finish still shows up here, which is what the OCR fallback
+ *   keys on.
  * @returns {string[]} distinct decodes found on this line
  */
-export function decodeLine(line) {
+export function decodeLine(line, partial) {
   if (line.length === 0) return [];
 
   // Run-length encode.
@@ -254,11 +276,24 @@ export function decodeLine(line) {
   // runs[k] is a bar iff k % 2 === barParity.
   const barParity = line[0] === 1 ? 0 : 1;
 
+  const span = partial ? { symbols: 0, from: 0, to: 0 } : undefined;
   const results = [];
   for (let i = barParity; i + 6 <= runs.length; i += 2) {
-    for (const text of [...decodeForwardAt(runs, i), decodeReverseAt(runs, i)]) {
+    for (const text of [...decodeForwardAt(runs, i, span), decodeReverseAt(runs, i, span)]) {
       if (text !== null && text !== '' && !results.includes(text)) results.push(text);
     }
+  }
+  if (span && span.symbols > 0) {
+    let x = 0;
+    for (let k = 0; k < span.from; k++) x += runs[k];
+    let x1 = x;
+    for (let k = span.from; k < Math.min(span.to, runs.length); k++) x1 += runs[k];
+    partial.symbols = span.symbols;
+    partial.x0 = x;
+    partial.x1 = x1;
+    partial.reverse = span.reverse;
+  } else if (partial) {
+    partial.symbols = 0;
   }
   return results;
 }
@@ -285,6 +320,8 @@ export function decodeLine(line) {
  * @param {number} [opts.band=9]         lines averaged into each scan line
  * @param {number} [opts.minContrast=40]  skip flat lines
  * @param {(text:string)=>boolean} [opts.validate] accept-first predicate
+ * @param {object} [opts.probe] receives `best`: the longest partial read seen
+ *   ({orientation, index, x0, x1, symbols, reverse}), for the OCR fallback
  * @returns {{text:string, orientation:'row'|'column', index:number}|null}
  */
 export function scanCode128(gray, width, height, opts = {}) {
@@ -293,6 +330,8 @@ export function scanCode128(gray, width, height, opts = {}) {
   const half = band >> 1;
   const minContrast = opts.minContrast ?? 40;
   const validate = opts.validate ?? (() => true);
+  const probe = opts.probe ?? null;
+  const partial = probe ? {} : undefined;
 
   let fallback = null;
 
@@ -310,9 +349,20 @@ export function scanCode128(gray, width, height, opts = {}) {
     const line = new Uint8Array(samples.length);
     for (let i = 0; i < samples.length; i++) line[i] = samples[i] <= threshold ? 1 : 0;
 
-    for (const text of decodeLine(line)) {
+    const texts = decodeLine(line, partial);
+    for (const text of texts) {
       if (validate(text)) return { text, orientation, index };
       if (!fallback) fallback = { text, orientation, index };
+    }
+    if (probe && partial.symbols > (probe.best?.symbols ?? 0)) {
+      probe.best = {
+        orientation,
+        index,
+        x0: partial.x0,
+        x1: partial.x1,
+        symbols: partial.symbols,
+        reverse: partial.reverse,
+      };
     }
     return null;
   };

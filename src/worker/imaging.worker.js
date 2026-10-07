@@ -12,7 +12,7 @@
  */
 
 import { renderWatermark, encodeJpeg, DEFAULTS as WM_DEFAULTS } from '../core/watermark.js';
-import { detectSku } from '../core/barcode.js';
+import { detectSku, cropForOcr } from '../core/barcode.js';
 import { readExifOrientation, toLandscape } from '../core/orientation.js';
 
 /** Reused across every photo. Resized in place by renderWatermark. */
@@ -91,6 +91,18 @@ async function processPhoto(job) {
     if (scanForSku) {
       detection = await detectSku(frame, { scanCanvas, ...options });
     }
+    // No barcode, but something that started to read as one: cut out the
+    // label for the OCR fallback. Both ways up — the read direction of a
+    // damaged barcode is only a guess, and upside-down digits OCR as other,
+    // plausible digits (0000706 -> 9020000); Inventory picks the real one.
+    const ocrCrops = [];
+    if (!detection.sku && detection.ocrRegion && options.ocr) {
+      for (const turn of [0, 180]) {
+        const region = { ...detection.ocrRegion, rotate: (detection.ocrRegion.rotate + turn) % 360 };
+        const crop = cropForOcr(frame, region, detection.scanScale);
+        ocrCrops.push(await crop.convertToBlob({ type: 'image/jpeg', quality: 0.92 }));
+      }
+    }
     const scannedAt = performance.now();
 
     renderWatermark(
@@ -116,6 +128,8 @@ async function processPhoto(job) {
       sku: detection.sku,
       skuMethod: detection.method,
       skuBoosted: detection.boosted,
+      ocrCrops,
+      ocrSymbols: detection.ocrRegion?.symbols ?? 0,
       rotated: oriented.rotated,
       width,
       height,

@@ -11,6 +11,7 @@ import * as db from '../core/db.js';
 import * as blobstore from '../core/blobstore.js';
 import * as imaging from '../app/imaging-client.js';
 import * as inventory from '../app/inventory.js';
+import { available as ocrAvailable } from '../app/ocr.js';
 import { diagnoseCamera, discoverOnLan, normaliseCameraUrl } from '../core/ccapi.js';
 import { describeBackend as describeBarcodeBackend } from '../core/barcode.js';
 import { loadWatermark, setCustomWatermark, clearCustomWatermark, watermarkInfo } from '../app/watermark-asset.js';
@@ -28,6 +29,7 @@ const FIELDS = [
   ['#set-poll', 'pollIntervalMs', 'number'],
   ['#set-attempts', 'maxQueueAttempts', 'number'],
   ['#set-autoupload', 'autoUpload', 'checked'],
+  ['#set-ocr', 'ocrFallback', 'checked'],
   ['#set-verbose', 'verboseErrors', 'checked'],
   ['#set-wakelock', 'keepScreenAwake', 'checked'],
   ['#set-notifications', 'notifications', 'checked'],
@@ -301,6 +303,13 @@ function exportLog() {
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
 
+async function describeOcr() {
+  if (!settings.load().ocrFallback) return 'off (Advanced setting)';
+  return (await ocrAvailable())
+    ? 'Tesseract on this server — used when a barcode starts to read but won’t finish'
+    : 'unavailable — install Tesseract on the serving PC (sudo apt install tesseract-ocr) and restart serve.py';
+}
+
 async function renderDiagnostics() {
   const dl = $('#diagnostics');
   if (!dl) return;
@@ -321,6 +330,7 @@ async function renderDiagnostics() {
     ['Image byte store', `${store.label}${store.note ? ` — ${store.note}` : ''}`],
     ['Storage used', quota ? `${formatBytes(used)} of ${formatBytes(quota)}` : formatBytes(used)],
     ['Barcode backend', await describeBarcodeBackend()],
+    ['Label OCR fallback', await describeOcr()],
     ['OffscreenCanvas', typeof OffscreenCanvas === 'undefined' ? 'MISSING — imaging will not work' : 'available'],
     ['createImageBitmap', typeof createImageBitmap === 'undefined' ? 'MISSING' : 'available'],
     ['Wake Lock', 'wakeLock' in navigator ? 'available' : 'unavailable (needs a secure context)'],

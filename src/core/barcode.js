@@ -23,7 +23,45 @@ export const DEFAULTS = Object.freeze({
   targetLongSide: 1600,
   contrastBoost: 2.5,
   scanStride: 6,
+  /** Partial read (start + this many symbols - 1) that marks a photo as a label worth OCR. */
+  ocrMinSymbols: 3,
 });
+
+/**
+ * Where to crop for OCR, from the scanner's best partial read, in the scan
+ * canvas's coordinates.
+ *
+ * A 7-digit label is ~8 symbols plus a stop, so the full bar width is
+ * estimated from the symbols that did match; the digits sit under the bars,
+ * within about half a barcode-width. The read direction says which way up the
+ * label is: rows read forward are upright, rows read in reverse are upside
+ * down, and a column read means the label is on its side. `rotate` (degrees
+ * clockwise) turns the crop upright for OCR.
+ *
+ * @returns {{x:number, y:number, w:number, h:number, rotate:0|90|180|270, symbols:number}|null}
+ */
+export function ocrRegion(best, width, height, minSymbols = DEFAULTS.ocrMinSymbols) {
+  if (!best || best.symbols < minSymbols) return null;
+  const span = Math.max(1, best.x1 - best.x0);
+  const full = Math.max(span, (span / best.symbols) * 8.3);
+  const along0 = best.x0 - 0.12 * full;
+  const along1 = best.x0 + 1.12 * full;
+  const across0 = best.index - 0.75 * full;
+  const across1 = best.index + 0.75 * full;
+
+  const clampRect = (x0, y0, x1, y1) => {
+    const x = Math.max(0, Math.floor(x0));
+    const y = Math.max(0, Math.floor(y0));
+    return { x, y, w: Math.min(width, Math.ceil(x1)) - x, h: Math.min(height, Math.ceil(y1)) - y };
+  };
+
+  if (best.orientation === 'row') {
+    return { ...clampRect(along0, across0, along1, across1), rotate: best.reverse ? 180 : 0, symbols: best.symbols };
+  }
+  // Column: the read runs top to bottom. Forward means the label's left edge is
+  // at the top (turned clockwise), so turn it back anticlockwise.
+  return { ...clampRect(across0, along0, across1, along1), rotate: best.reverse ? 90 : 270, symbols: best.symbols };
+}
 
 let detectorPromise;
 
@@ -130,7 +168,9 @@ async function nativeScan(detector, source) {
  * @param {ImageBitmap|HTMLCanvasElement|OffscreenCanvas} bitmap full-resolution frame
  * @param {object} [opts]
  * @param {OffscreenCanvas|HTMLCanvasElement} [opts.scanCanvas] canvas to reuse across photos
- * @returns {Promise<{sku:string|null, method:string|null, boosted:boolean, ms:number}>}
+ * @returns {Promise<{sku:string|null, method:string|null, boosted:boolean, ms:number,
+ *   ocrRegion?:object|null, scanScale?:number}>} on a miss, `ocrRegion` (scan-canvas
+ *   coordinates; divide by `scanScale` for the frame's) marks a likely label
  */
 export async function detectSku(bitmap, opts = {}) {
   const t0 = (typeof performance !== 'undefined' ? performance : Date).now();
@@ -143,11 +183,15 @@ export async function detectSku(bitmap, opts = {}) {
   const rgba = ctx.getImageData(0, 0, width, height).data;
   const grey = toGreyscale(rgba);
 
+  const probe = {};
   const done = (sku, method, boosted) => ({
     sku,
     method: sku ? method : null,
     boosted,
     ms: Math.round((typeof performance !== 'undefined' ? performance : Date).now() - t0),
+    ...(sku
+      ? {}
+      : { ocrRegion: ocrRegion(probe.best, width, height, opts.ocrMinSymbols), scanScale: width / (bitmap.width || width) }),
   });
 
   const detector = await getNativeDetector();
@@ -156,7 +200,7 @@ export async function detectSku(bitmap, opts = {}) {
   const native1 = await nativeScan(detector, canvas);
   if (native1) return done(native1, 'BarcodeDetector', false);
 
-  const hit1 = scanCode128(grey, width, height, { stride, validate: isValidSku });
+  const hit1 = scanCode128(grey, width, height, { stride, validate: isValidSku, probe });
   if (hit1 && isValidSku(hit1.text)) return done(hit1.text, 'code128-js', false);
 
   // Pass 2 — 2.5x contrast boost on greyscale (§2.2).
@@ -166,10 +210,37 @@ export async function detectSku(bitmap, opts = {}) {
   const native2 = await nativeScan(detector, canvas);
   if (native2) return done(native2, 'BarcodeDetector', true);
 
-  const hit2 = scanCode128(boosted, width, height, { stride, validate: isValidSku });
+  const hit2 = scanCode128(boosted, width, height, { stride, validate: isValidSku, probe });
   if (hit2 && isValidSku(hit2.text)) return done(hit2.text, 'code128-js', true);
 
   return done(null, null, true);
+}
+
+/**
+ * Cut the OCR region out of the full frame, turned upright and scaled so its
+ * long side is at most `maxSide` — Tesseract's time grows with pixels, and
+ * printed digits a few dozen pixels tall read best.
+ *
+ * @param {ImageBitmap|OffscreenCanvas|HTMLCanvasElement} frame full-resolution frame
+ * @param {{x:number,y:number,w:number,h:number,rotate:number}} region in scan-canvas coordinates
+ * @param {number} scanScale scan-canvas width / frame width (from detectSku)
+ * @returns {OffscreenCanvas|HTMLCanvasElement}
+ */
+export function cropForOcr(frame, region, scanScale, maxSide = 1000) {
+  const sx = region.x / scanScale;
+  const sy = region.y / scanScale;
+  const sw = region.w / scanScale;
+  const sh = region.h / scanScale;
+  const k = Math.min(1, maxSide / Math.max(sw, sh));
+  const w = Math.max(1, Math.round(sw * k));
+  const h = Math.max(1, Math.round(sh * k));
+  const sideways = region.rotate === 90 || region.rotate === 270;
+  const canvas = makeCanvas(sideways ? h : w, sideways ? w : h);
+  const ctx = canvas.getContext('2d');
+  ctx.translate(canvas.width / 2, canvas.height / 2);
+  ctx.rotate((region.rotate * Math.PI) / 180);
+  ctx.drawImage(frame, sx, sy, sw, sh, -w / 2, -h / 2, w, h);
+  return canvas;
 }
 
 /** Which backend will be used, for the Settings diagnostics panel. */

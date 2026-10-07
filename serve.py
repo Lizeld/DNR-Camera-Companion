@@ -72,7 +72,9 @@ import http.server
 import json
 import re
 import secrets
+import shutil
 import socketserver
+import subprocess
 import sys
 import threading
 import time
@@ -101,6 +103,14 @@ PROXY_PREFIX = "/backend"
 JSON_TIMEOUT_SECONDS = 30
 PUT_TIMEOUT_SECONDS = 300
 MAX_BODY_BYTES = 512 * 1024 * 1024
+
+# OCR fallback for labels whose barcode won't decode: the app crops the label
+# and posts it here; Tesseract reads the printed digits. Optional — without the
+# binary the endpoint says so and the app simply doesn't use it.
+TESSERACT = shutil.which("tesseract")
+OCR_MAX_BYTES = 12 * 1024 * 1024
+OCR_TIMEOUT_SECONDS = 20
+SKU_TOKEN = re.compile(r"(?<!\d)\d{7}(?!\d)")
 
 # Set in main() when --backend is given; read by every Handler instance.
 PROXY: BackendProxy | None = None
@@ -255,6 +265,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?", 1)[0]
+        if path == "/ocr/sku":
+            return self._ocr_sku()
         if path.startswith(f"{PROXY_PREFIX}/api/"):
             return self._proxy_json(path[len(f"{PROXY_PREFIX}/api/"):])
         self._send_json(405, {"error": "method_not_allowed",
@@ -312,9 +324,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         """What the app should be pointed at, and where it goes. A fresh browser
         uses `camera` and `api` to pre-fill its blank settings."""
         if PROXY is None:
-            return self._send_json(200, {"proxy": False, "api": None, "upstream": None, "camera": CAMERA})
+            return self._send_json(200, {"proxy": False, "api": None, "upstream": None,
+                                         "camera": CAMERA, "ocr": bool(TESSERACT)})
         self._send_json(200, {
             "camera": CAMERA,
+            "ocr": bool(TESSERACT),
             "proxy": True,
             "api": f"{PROXY_PREFIX}/api",
             "upstream": PROXY.upstream,
@@ -346,6 +360,50 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             payload = proxy.rewrite_upload_url(payload)
         self.log_message("proxy POST %s -> %s %s", endpoint, status, url)
         self._send_bytes(status, payload, content_type)
+
+    def _ocr_sku(self):
+        """Read 7-digit SKUs off a cropped, upright label image (PNG/JPEG body).
+
+        Digits-only Tesseract, block mode first and sparse-text mode if that
+        finds nothing. Returns every standalone 7-digit run — the app checks
+        them against Inventory before trusting one, since OCR has no checksum.
+        """
+        if not TESSERACT:
+            return self._send_json(503, {
+                "error": "ocr_unavailable",
+                "message": "Tesseract is not installed on this server: sudo apt install tesseract-ocr",
+            })
+        if self._rejects_chunked():
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0 or length > OCR_MAX_BYTES:
+            return self._send_json(413, {"error": "bad_size", "message": f"expected an image up to {OCR_MAX_BYTES} bytes"})
+        image = self.rfile.read(length)
+
+        started = time.monotonic()
+        candidates: list[str] = []
+        used = None
+        for psm in ("6", "11"):
+            try:
+                proc = subprocess.run(
+                    [TESSERACT, "stdin", "stdout", "--psm", psm, "-c", "tessedit_char_whitelist=0123456789"],
+                    input=image, capture_output=True, timeout=OCR_TIMEOUT_SECONDS,
+                )
+            except subprocess.TimeoutExpired:
+                return self._send_json(504, {"error": "ocr_timeout", "message": "Tesseract took too long"})
+            text = proc.stdout.decode("utf-8", "replace")
+            for token in SKU_TOKEN.findall(text):
+                if token not in candidates:
+                    candidates.append(token)
+            if candidates:
+                used = psm
+                break
+        ms = round((time.monotonic() - started) * 1000)
+        self.log_message("ocr %s bytes -> %s (psm %s, %sms)", len(image), candidates or "nothing", used, ms)
+        self._send_json(200, {"candidates": candidates, "psm": used, "ms": ms})
 
     def _proxy_get(self, endpoint: str):
         proxy = PROXY
@@ -531,6 +589,7 @@ def main(argv: list[str]) -> int:
     for addr in addresses:
         print(f"  tablet    http://{addr}:{args.port}/")
     print(f"  tests     http://{primary}:{args.port}/tests.html")
+    print(f"  label OCR {'Tesseract at ' + TESSERACT if TESSERACT else 'off (sudo apt install tesseract-ocr to enable)'}")
     print()
 
     keeper = None

@@ -117,6 +117,35 @@ export function initStatus(opts = {}) {
 
   on($('#open-review'), 'click', () => navigate('gallery', { filter: db.STATUS.REVIEW }));
 
+  // OCR read a number Inventory doesn't know: the operator decides.
+  let ocrAsk = null;
+  onBus('ocr:unconfirmed', (ask) => {
+    ocrAsk = ask;
+    text($('#ocr-what'), ask.candidates.length > 1 ? 'either of them' : 'it');
+    $('#ocr-choices').replaceChildren(
+      ...ask.candidates.slice(0, 3).map((sku) => {
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-small btn-primary mono';
+        btn.textContent = `File as ${sku}`;
+        on(btn, 'click', async () => {
+          if (ocrAsk !== ask) return;
+          ocrAsk = null;
+          show($('#ocr-banner'), false);
+          const filed = await orchestrator.fileThrough(ask.dcfKey, sku);
+          if (filed) toast(`${filed} photo(s) filed under SKU ${sku}`, 'ok');
+          else toast('Those photos were already filed or set aside — check Photos', 'error');
+        });
+        return btn;
+      }),
+    );
+    show($('#ocr-banner'), true);
+  });
+  on($('#ocr-reject'), 'click', () => {
+    ocrAsk = null;
+    show($('#ocr-banner'), false);
+    toast('OK — shoot the label again, closer, or assign the SKU in Photos', 'info', 6000);
+  });
+
   on($('#action-clear-log'), 'click', () => {
     clearLog();
     logEl.replaceChildren();

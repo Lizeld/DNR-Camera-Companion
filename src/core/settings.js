@@ -22,6 +22,8 @@ export const DEFAULTS = Object.freeze({
   keepScreenAwake: true,
   notifications: false,
   autoUpload: true,
+  /** Read the printed digits (Tesseract via serve.py) when a label's barcode won't decode. */
+  ocrFallback: true,
 });
 
 let cache = null;
@@ -39,7 +41,7 @@ function coerce(raw) {
   if (s.autoEvacuate <= s.staleWarning) s.autoEvacuate = s.staleWarning + 1;
   s.pollIntervalMs = Math.round(num(s.pollIntervalMs, DEFAULTS.pollIntervalMs, 250, 30000));
   s.maxQueueAttempts = Math.round(num(s.maxQueueAttempts, DEFAULTS.maxQueueAttempts, 1, 100));
-  for (const k of ['verboseErrors', 'keepScreenAwake', 'notifications', 'autoUpload']) {
+  for (const k of ['verboseErrors', 'keepScreenAwake', 'notifications', 'autoUpload', 'ocrFallback']) {
     s[k] = Boolean(s[k]);
   }
   for (const k of ['cameraUrl', 'backendUrl', 'backendToken', 'keyPrefix']) {

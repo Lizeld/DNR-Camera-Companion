@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, loadFixture } from './runner.js';
-import { detectSku, isValidSku, toGreyscale, boostContrast, downscaleForScan } from '../core/barcode.js';
+import { detectSku, isValidSku, toGreyscale, boostContrast, downscaleForScan, ocrRegion, cropForOcr } from '../core/barcode.js';
 import { scanCode128 } from '../core/code128.js';
 
 const SKU = '0000646';
@@ -132,5 +132,81 @@ describe('Real label under shrink-wrap (production regression)', () => {
     const valid = (t) => isValidSku(t);
     expect(scanCode128(grey, width, height, { band: 1, validate: valid })?.text === '0000705').toBeFalsy('single lines read it');
     expect(scanCode128(grey, width, height, { validate: valid })?.text).toBe('0000705');
+  });
+});
+
+describe('OCR fallback — where to crop', () => {
+  const best = (o) => ({ orientation: 'row', index: 500, x0: 400, x1: 600, symbols: 4, reverse: false, ...o });
+
+  it('ignores a partial read too short to be a label', () => {
+    expect(ocrRegion(best({ symbols: 2 }), 1600, 1067)).toBeNull();
+    expect(ocrRegion(null, 1600, 1067)).toBeNull();
+  });
+
+  it('covers the whole estimated barcode and the digits under it', () => {
+    // 4 symbols over 200px -> ~415px for a full 7-digit code.
+    const r = ocrRegion(best(), 1600, 1067);
+    expect(r.x < 400).toBeTruthy('starts before the first bar');
+    expect(r.x + r.w > 400 + 415).toBeTruthy('reaches past the estimated end');
+    expect(r.y < 500 && r.y + r.h > 500 + 150).toBeTruthy('extends below the scan line to the digits');
+    expect(r.rotate).toBe(0);
+  });
+
+  it('turns upside-down and sideways labels upright', () => {
+    expect(ocrRegion(best({ reverse: true }), 1600, 1067).rotate).toBe(180);
+    expect(ocrRegion(best({ orientation: 'column' }), 1600, 1067).rotate).toBe(270);
+    expect(ocrRegion(best({ orientation: 'column', reverse: true }), 1600, 1067).rotate).toBe(90);
+  });
+
+  it('stays inside the image', () => {
+    const r = ocrRegion(best({ x0: 1500, x1: 1590, index: 1050 }), 1600, 1067);
+    expect(r.x >= 0 && r.y >= 0 && r.x + r.w <= 1600 && r.y + r.h <= 1067).toBeTruthy();
+  });
+});
+
+/** The real 0000706 label with a white stripe painted through the bars. */
+async function damagedLabel() {
+  const photo = await loadFixture('label-wrapped-0000706.jpg');
+  const canvas = new OffscreenCanvas(photo.width, photo.height);
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(photo, 0, 0);
+  photo.close();
+  ctx.fillStyle = '#e8e8ec';
+  ctx.fillRect(790, 380, 26, 270); // through the middle of the bars, clear of the digits
+  return canvas;
+}
+
+describe('OCR fallback — a label whose barcode is damaged', () => {
+  it('fails to decode but flags the photo as a label to OCR', async () => {
+    const result = await detectSku(await damagedLabel());
+    expect(result.sku).toBeNull();
+    expect(result.ocrRegion).toBeTruthy('no OCR region for a half-readable label');
+  });
+
+  it('does not flag an ordinary photo', async () => {
+    const scene = await loadFixture('base.png');
+    const result = await detectSku(scene);
+    scene.close();
+    expect(result.ocrRegion ?? null).toBeNull();
+  });
+
+  it('crops the printed digits, which serve.py reads as the SKU', async () => {
+    const frame = await damagedLabel();
+    const result = await detectSku(frame);
+    const crop = cropForOcr(frame, result.ocrRegion, result.scanScale);
+    expect(crop.width > 100 && crop.height > 100).toBeTruthy('crop too small');
+
+    const config = await fetch('/backend/config').then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    if (!config?.ocr) return; // not served by serve.py with Tesseract — nothing more to check here
+    // Both ways up, as the worker does: the read direction of a damaged
+    // barcode is a guess, and the wrong way up reads as other digits.
+    const { identify } = await import('../app/ocr.js');
+    const blobs = [];
+    for (const turn of [0, 180]) {
+      const region = { ...result.ocrRegion, rotate: (result.ocrRegion.rotate + turn) % 360 };
+      blobs.push(await cropForOcr(frame, region, result.scanScale).convertToBlob({ type: 'image/jpeg', quality: 0.92 }));
+    }
+    const read = await identify(blobs);
+    expect(read?.candidates ?? []).toContain('0000706');
   });
 });
