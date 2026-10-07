@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>DNR Watermark</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23465a78'/><text x='16' y='22' font-family='sans-serif' font-size='14' font-weight='700' fill='white' text-anchor='middle'>D</text></svg>">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">DNR</span>
+    <span class="brand-name">Watermark</span>
+  </div>
+  <div class="topbar-status">
+    <span id="connection-pill" class="pill pill-offline">
+      <span class="dot"></span><span id="connection-label">Offline</span>
+    </span>
+    <button id="run-toggle" class="btn btn-primary">Start</button>
+  </div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button class="tab is-active" data-tab="status" role="tab">Status</button>
+  <button class="tab" data-tab="gallery" role="tab">Gallery</button>
+  <button class="tab" data-tab="camera" role="tab">Camera</button>
+  <button class="tab" data-tab="settings" role="tab">Settings</button>
+</nav>
+
+<main>
+  <!-- ================= STATUS ================= -->
+  <section class="panel is-active" data-panel="status">
+
+    <div id="foreground-notice" class="banner banner-info">
+      <div>
+        <strong>Foreground only.</strong>
+        A browser cannot poll the camera while this tab is backgrounded or closed (§5.2).
+        Keep this tab visible for the whole shoot.
+        <span id="wakelock-note"></span>
+      </div>
+      <button class="btn btn-ghost btn-small" data-dismiss="foreground-notice">Dismiss</button>
+    </div>
+
+    <div id="upload-failure-banner" class="banner banner-error" hidden>
+      <div>
+        <strong>Uploads failed.</strong>
+        <span id="upload-failure-detail"></span>
+      </div>
+      <button id="retry-uploads" class="btn btn-danger btn-small">Retry all</button>
+    </div>
+
+    <div class="grid">
+      <div class="card card-pending">
+        <div class="card-label">Pending group</div>
+        <div id="pending-count" class="figure">0</div>
+        <div class="progress">
+          <div id="pending-bar" class="progress-fill" style="width:0%"></div>
+          <div id="pending-marker" class="progress-marker" title="Stale warning"></div>
+        </div>
+        <div id="pending-hint" class="card-hint">0 of 35 to auto-evacuate</div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">Last SKU</div>
+        <div id="last-sku" class="figure figure-small">—</div>
+        <div id="last-sku-time" class="card-hint">never</div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">Last photo</div>
+        <div id="last-photo" class="figure figure-small">—</div>
+        <div id="last-photo-time" class="card-hint">never</div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">Queue</div>
+        <div id="queue-depth" class="figure figure-small">0</div>
+        <div id="queue-hint" class="card-hint">nothing waiting</div>
+      </div>
+    </div>
+
+    <div class="row row-stats">
+      <span>Processed <b id="stat-processed">0</b></span>
+      <span>Polls <b id="stat-polls">0</b></span>
+      <span>Busy responses <b id="stat-transient">0</b></span>
+      <span>Uploads queued <b id="stat-uploads">0</b></span>
+      <span>Storage <b id="stat-storage">—</b></span>
+    </div>
+
+    <div class="row row-actions">
+      <button id="action-resync" class="btn">Re-sync newest 60</button>
+      <button id="action-clear-pending" class="btn">Move pending to review</button>
+      <label class="check">
+        <input type="checkbox" id="verbose-toggle"> Verbose errors
+      </label>
+      <label class="check">
+        <input type="checkbox" id="autoscroll-toggle" checked> Auto-scroll log
+      </label>
+      <button id="action-clear-log" class="btn btn-ghost btn-small">Clear log</button>
+    </div>
+
+    <h2 class="section-title">Activity</h2>
+    <div id="activity-log" class="log" role="log" aria-live="polite"></div>
+  </section>
+
+  <!-- ================= GALLERY ================= -->
+  <section class="panel" data-panel="gallery">
+    <div class="toolbar">
+      <div class="filters" id="gallery-filters">
+        <button class="chip is-active" data-filter="ALL">All</button>
+        <button class="chip" data-filter="PENDING">Pending</button>
+        <button class="chip" data-filter="GROUPED">Grouped</button>
+        <button class="chip" data-filter="REVIEW">Review</button>
+        <button class="chip" data-filter="FAILED">Failed</button>
+        <button class="chip" data-filter="UPLOADED">Uploaded</button>
+      </div>
+      <div class="toolbar-actions">
+        <span id="gallery-selection" class="muted">0 selected</span>
+        <button id="gallery-select-all" class="btn btn-small">Select all</button>
+        <button id="gallery-clear-selection" class="btn btn-small">Clear</button>
+        <button id="gallery-group" class="btn btn-small btn-primary" disabled>Group…</button>
+        <button id="gallery-upload" class="btn btn-small btn-primary" disabled>Upload</button>
+        <button id="gallery-delete" class="btn btn-small btn-danger" disabled>Delete</button>
+      </div>
+    </div>
+    <p class="muted hint">
+      Drag on empty space to rubber-band select. These manual paths are the recovery
+      mechanism when automatic grouping goes wrong.
+    </p>
+    <div id="gallery-grid" class="grid-photos"></div>
+    <div id="gallery-empty" class="empty">No photos held locally yet.</div>
+  </section>
+
+  <!-- ================= CAMERA BROWSER ================= -->
+  <section class="panel" data-panel="camera">
+    <div class="toolbar">
+      <div class="toolbar-actions">
+        <select id="camera-folder" class="input input-select"><option>—</option></select>
+        <button id="camera-refresh" class="btn btn-small">Refresh</button>
+        <button id="camera-more" class="btn btn-small">Load 100 more</button>
+        <span id="camera-count" class="muted"></span>
+      </div>
+      <div class="toolbar-actions">
+        <span id="camera-selection" class="muted">0 selected</span>
+        <button id="camera-clear" class="btn btn-small">Clear</button>
+        <button id="camera-ingest" class="btn btn-small btn-primary" disabled>Download into pipeline</button>
+      </div>
+    </div>
+    <p class="muted hint">Newest first. Thumbnails are fetched lazily — the camera link tops out around 2 MB/s.</p>
+    <div id="camera-grid" class="grid-photos"></div>
+    <div id="camera-empty" class="empty">Connect to the camera and press Refresh.</div>
+  </section>
+
+  <!-- ================= SETTINGS ================= -->
+  <section class="panel" data-panel="settings">
+    <h2 class="section-title">Camera</h2>
+    <div class="field">
+      <label for="set-camera-url">Camera URL</label>
+      <div class="field-row">
+        <input id="set-camera-url" class="input" type="text" inputmode="url" placeholder="http://192.168.1.55:8080">
+        <button id="test-camera" class="btn">Test connection</button>
+      </div>
+      <p class="field-hint">
+        Use HTTP, port 8080. HTTPS costs about 30% throughput because the camera's SoC is the
+        bottleneck when encrypting, and TLS buys nothing on a LAN against a self-signed cert (§3.1).
+      </p>
+      <div id="camera-test-result" class="result" hidden></div>
+    </div>
+
+    <div class="field">
+      <label for="set-discover-prefix">LAN auto-discovery</label>
+      <div class="field-row">
+        <input id="set-discover-prefix" class="input" type="text" placeholder="192.168.1">
+        <button id="discover-camera" class="btn">Scan subnet</button>
+      </div>
+      <p class="field-hint">
+        Probes <code>x.x.x.1–254</code> on ports 8080 and 80. Only positive results are meaningful:
+        a host that is not a CORS-enabled camera fails the same way an empty address does.
+      </p>
+      <div id="discover-result" class="result" hidden></div>
+    </div>
+
+    <div class="field">
+      <label>Camera CORS (§3.6)</label>
+      <div class="field-row">
+        <button id="cors-read" class="btn">Read config</button>
+        <button id="cors-write" class="btn">Allow this origin</button>
+        <code id="cors-origin" class="muted"></code>
+      </div>
+      <p class="field-hint">
+        CORS is what makes a browser client viable at all. The write payload shape is not documented,
+        so this tries the plausible variants and shows exactly what the camera replied.
+      </p>
+      <div id="cors-result" class="result" hidden></div>
+    </div>
+
+    <h2 class="section-title">Backend</h2>
+    <div class="field">
+      <label for="set-backend-url">Backend URL</label>
+      <input id="set-backend-url" class="input" type="text" inputmode="url" placeholder="https://inventory.example.com">
+      <p class="field-hint">
+        Resolved endpoint base: <code id="backend-resolved">—</code>.
+        The <code>/api</code> prefix and <code>https://</code> are forced: root paths hit the SPA and
+        return nginx 405, and an <code>http://</code> base 301-redirects, downgrading POST to GET (§4).
+        Enter <code>/backend</code> instead to go through this server's proxy
+        (<code>python serve.py --backend &lt;url&gt;</code>), which makes uploads same-origin and so
+        needs no CORS grant from the backend or the bucket.
+      </p>
+    </div>
+    <div class="field">
+      <label for="set-backend-token">Bearer token</label>
+      <div class="field-row">
+        <input id="set-backend-token" class="input" type="password" autocomplete="off" placeholder="paste token">
+        <button id="toggle-token" class="btn">Show</button>
+      </div>
+      <p class="field-hint">Stored in this browser's localStorage. Currently: <code id="token-mask">(not set)</code></p>
+    </div>
+    <div class="field">
+      <label for="set-key-prefix">S3 key prefix</label>
+      <input id="set-key-prefix" class="input" type="text" placeholder="listings/">
+      <p class="field-hint">
+        The bucket needs CORS allowing <code>PUT</code> from <code id="origin-echo"></code> with the
+        <code>Content-Type</code> header. Android did not need this; browsers do — unless the
+        <code>/backend</code> proxy is carrying the upload, in which case the bucket only ever sees
+        this server.
+      </p>
+    </div>
+
+    <h2 class="section-title">Watermark</h2>
+    <div class="field-grid">
+      <div class="field">
+        <label for="set-padding">Padding (px)</label>
+        <input id="set-padding" class="input" type="number" min="0" max="2000" step="1">
+      </div>
+      <div class="field">
+        <label for="set-quality">JPEG quality</label>
+        <input id="set-quality" class="input" type="number" min="1" max="100" step="1">
+      </div>
+    </div>
+    <div class="field">
+      <label for="set-watermark-file">Watermark PNG</label>
+      <div class="field-row">
+        <input id="set-watermark-file" class="input" type="file" accept="image/png,image/*">
+        <button id="reset-watermark" class="btn">Use bundled asset</button>
+      </div>
+      <p class="field-hint">
+        Current: <code id="watermark-info">—</code>. Pasted bottom-left at the padding inset; scaled
+        down only if wider than 30% of the base.
+      </p>
+      <canvas id="watermark-preview" class="preview" width="200" height="120"></canvas>
+    </div>
+
+    <h2 class="section-title">Pipeline</h2>
+    <div class="field-grid">
+      <div class="field">
+        <label for="set-stale">Stale warning at</label>
+        <input id="set-stale" class="input" type="number" min="1" max="500" step="1">
+      </div>
+      <div class="field">
+        <label for="set-evacuate">Auto-evacuate at</label>
+        <input id="set-evacuate" class="input" type="number" min="2" max="1000" step="1">
+      </div>
+      <div class="field">
+        <label for="set-poll">Poll interval (ms)</label>
+        <input id="set-poll" class="input" type="number" min="250" max="30000" step="50">
+      </div>
+      <div class="field">
+        <label for="set-attempts">Max queue attempts</label>
+        <input id="set-attempts" class="input" type="number" min="1" max="100" step="1">
+      </div>
+    </div>
+    <div class="field">
+      <label class="check"><input type="checkbox" id="set-autoupload"> Upload automatically when a group is flushed</label>
+      <label class="check"><input type="checkbox" id="set-verbose"> Verbose errors</label>
+      <label class="check"><input type="checkbox" id="set-wakelock"> Keep the screen awake while running</label>
+      <label class="check"><input type="checkbox" id="set-notifications"> Desktop notifications (foreground only)</label>
+    </div>
+
+    <h2 class="section-title">Diagnostics</h2>
+    <dl id="diagnostics" class="diagnostics"></dl>
+    <div class="row row-actions">
+      <a class="btn" href="tests.html" target="_blank" rel="noopener">Open test suite</a>
+      <button id="export-log" class="btn">Export activity log</button>
+      <button id="danger-clear" class="btn btn-danger">Erase all local data</button>
+    </div>
+  </section>
+</main>
+
+<div id="toast-host" class="toast-host" aria-live="assertive"></div>
+
+<dialog id="photo-dialog" class="dialog">
+  <div class="dialog-head">
+    <strong id="photo-dialog-title">Photo</strong>
+    <button class="btn btn-ghost btn-small" data-close-dialog>Close</button>
+  </div>
+  <img id="photo-dialog-img" alt="">
+  <pre id="photo-dialog-meta" class="meta"></pre>
+</dialog>
+
+<dialog id="sku-dialog" class="dialog dialog-small">
+  <form method="dialog">
+    <div class="dialog-head"><strong>Assign SKU</strong></div>
+    <p class="muted" id="sku-dialog-count"></p>
+    <input id="sku-input" class="input" type="text" inputmode="numeric" pattern="\d{7}" maxlength="7" placeholder="7 digits">
+    <p class="field-hint" id="sku-error"></p>
+    <div class="dialog-actions">
+      <button class="btn" value="cancel">Cancel</button>
+      <button class="btn btn-primary" id="sku-confirm" value="ok">Assign</button>
+    </div>
+  </form>
+</dialog>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

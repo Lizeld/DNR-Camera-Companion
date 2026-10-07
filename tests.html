@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DNR Watermark — tests</title>
+<style>
+  :root { color-scheme: dark light; }
+  body {
+    margin: 0; padding: 20px;
+    background: #12151a; color: #e8edf4;
+    font: 14px/1.5 ui-monospace, Consolas, monospace;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: #8d9aad; margin: 0 0 16px; font-size: 13px; }
+  .sub a { color: #5b8dd6; }
+  #summary {
+    position: sticky; top: 0; z-index: 5;
+    padding: 12px 14px; margin-bottom: 16px;
+    border-radius: 8px; border: 1px solid #2a323e; background: #1a1f27;
+    font-size: 15px; font-weight: 700;
+  }
+  #summary.ok   { border-color: #3fbf7f; color: #3fbf7f; }
+  #summary.fail { border-color: #e05a5a; color: #e05a5a; }
+  .suite { margin-bottom: 18px; }
+  .suite h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
+    color: #8d9aad; border-bottom: 1px solid #2a323e; padding-bottom: 5px; margin: 0 0 6px;
+  }
+  .test { padding: 2px 6px; border-radius: 4px; white-space: pre-wrap; }
+  .test.pass    { color: #3fbf7f; }
+  .test.fail    { color: #e05a5a; background: rgba(224,90,90,.1); font-weight: 700; }
+  .test.running { color: #8d9aad; }
+  .detail {
+    margin: 2px 0 8px 22px; padding: 8px 10px;
+    border-left: 2px solid #e05a5a; color: #d7b3b3;
+    background: rgba(224,90,90,.07); white-space: pre-wrap; font-size: 12.5px;
+  }
+  .notice {
+    padding: 10px 12px; margin-bottom: 14px; border-radius: 8px;
+    border: 1px solid #e0a33c; background: rgba(224,163,60,.1); color: #e0a33c; font-size: 13px;
+  }
+</style>
+</head>
+<body>
+
+<h1>DNR Watermark — test suite</h1>
+<p class="sub">
+  Spec §8. Runs in the browser because the code under test is browser code.
+  Fixtures come from <code>python tools/make_fixtures.py</code>.
+  <a href="index.html">← back to the app</a>
+</p>
+
+<div id="fixture-warning" class="notice" hidden></div>
+<div id="summary">Running…</div>
+<div id="results"></div>
+
+<script type="module">
+import { run } from './src/test/runner.js';
+
+// Importing a suite registers it. Order here is the report order.
+import './src/test/dcf.test.js';
+import './src/test/grouping.test.js';
+import './src/test/orchestrator.test.js';
+import './src/test/ccapi.test.js';
+import './src/test/code128.test.js';
+import './src/test/upload.test.js';
+import './src/test/orientation.test.js';
+import './src/test/watermark.test.js';
+import './src/test/barcode.test.js';
+
+const summaryEl = document.getElementById('summary');
+
+// Fixtures are generated, not committed as source; fail loudly and usefully.
+const probe = await fetch('tests/fixtures/manifest.json', { cache: 'no-store' }).catch(() => null);
+if (!probe?.ok) {
+  const warn = document.getElementById('fixture-warning');
+  warn.hidden = false;
+  warn.textContent =
+    'tests/fixtures/manifest.json is missing — the golden-image and barcode suites will fail. '
+    + 'Generate the fixtures with:  python tools/make_fixtures.py';
+}
+
+const result = await run(document.getElementById('results'));
+summaryEl.className = result.failed === 0 ? 'ok' : 'fail';
+summaryEl.textContent =
+  `${result.failed === 0 ? 'PASS' : 'FAIL'} — ${result.passed}/${result.total} passed`
+  + `${result.failed ? `, ${result.failed} failed` : ''} in ${result.durationMs}ms`;
+document.title = `${result.failed === 0 ? 'PASS' : `FAIL (${result.failed})`} — DNR Watermark tests`;
+</script>
+</body>
+</html>

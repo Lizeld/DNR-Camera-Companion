@@ -1,0 +1,21 @@
+{
+  "sku": "0000646",
+  "padding": 125,
+  "base": {
+    "file": "base.png",
+    "width": 1200,
+    "height": 800
+  },
+  "watermark": {
+    "file": "watermark-small.png",
+    "width": 300,
+    "height": 200
+  },
+  "expected": "expected.png",
+  "labels": {
+    "normal": "label-0000646.png",
+    "lowContrast": "label-lowcontrast-0000646.png",
+    "rotated": "label-rotated-0000646.png"
+  },
+  "note": "Regenerate with: python tools/make_fixtures.py"
+}
