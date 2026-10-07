@@ -87,7 +87,7 @@ async function refreshFolders() {
     select.value = newest;
     await selectFolder(newest);
   } catch (err) {
-    toast(`Camera browse failed: ${err.message}`, 'error');
+    toast(`Couldn't read the camera card: ${err.message}`, 'error');
     log.error('Camera browse failed', err.message);
   } finally {
     btn.disabled = false;
@@ -115,7 +115,7 @@ async function selectFolder(folderPath) {
 async function loadNextPage() {
   if (loading || !state.folderPath) return;
   if (state.nextPageIndex >= state.pages.length) {
-    toast('End of folder', 'info');
+    toast('No older photos in this folder', 'info');
     return;
   }
   loading = true;
@@ -146,7 +146,7 @@ async function loadNextPage() {
     );
     void loadThumbnails(items);
   } catch (err) {
-    toast(`Load failed: ${err.message}`, 'error');
+    toast(`Couldn't load more photos: ${err.message}`, 'error');
     log.error('Camera page load failed', err.message);
   } finally {
     loading = false;
@@ -211,14 +211,14 @@ async function onIngest() {
     const added = await orchestrator.ingestPaths(paths);
     toast(
       added === paths.length
-        ? `${added} photo(s) queued`
-        : `${added} queued, ${paths.length - added} already handled`,
+        ? `Adding ${added} photo(s) — they join the current part`
+        : `Adding ${added} photo(s); ${paths.length - added} were already on this device`,
       'ok',
     );
     selection.clear();
     syncSelectionUi();
   } catch (err) {
-    toast(`Ingest failed: ${err.message}`, 'error');
+    toast(`Couldn't add the photos: ${err.message}`, 'error');
     log.error('Manual ingest failed', err.message);
   } finally {
     btn.disabled = selection.size === 0;

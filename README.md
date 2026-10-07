@@ -1,4 +1,4 @@
-# DNR Watermark — web app
+# DNR Camera Companion — web app
 
 Browser port of the Android `WatermarkAndroid` app, built to
 [`WEBAPP_SPEC.md`](WEBAPP_SPEC.md).
@@ -31,7 +31,18 @@ If uploads fail, add `--backend https://inventory.example.com` and set
 **Settings → Backend URL** to `/backend`. See *Backend CORS* below for why that
 is usually necessary. It is remembered too.
 
-Test suite: `http://<lan-ip>:8000/tests.html` — 129 tests, ~2s.
+### Using it (operator)
+
+Once Settings has the camera address and the Inventory site + upload token,
+the **Shoot** tab is all an operator needs: press **Start shooting**,
+photograph a part, finish with a close-up of its SKU label, repeat. Each part
+appears under *Recent parts* with its upload state, a **Retry** if it failed and
+an **Open in Inventory** link once the draft exists. Problems surface as
+banners with the one button that fixes them; **Help** in the top bar has the
+troubleshooting guide. Counters and the activity log live under *Technical
+details*, and everything beyond the essentials under *Settings → Advanced*.
+
+Test suite: `http://<lan-ip>:8000/tests.html` — 143 tests, ~2s.
 
 Requirements: Python 3.9+ with Pillow (fixtures/golden image only). The app
 itself has **no build step and no dependencies** — plain ES modules.

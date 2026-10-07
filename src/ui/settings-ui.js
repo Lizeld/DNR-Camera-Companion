@@ -10,6 +10,7 @@ import * as settings from '../core/settings.js';
 import * as db from '../core/db.js';
 import * as blobstore from '../core/blobstore.js';
 import * as imaging from '../app/imaging-client.js';
+import * as inventory from '../app/inventory.js';
 import { diagnoseCamera, discoverOnLan, normaliseCameraUrl } from '../core/ccapi.js';
 import { describeBackend as describeBarcodeBackend } from '../core/barcode.js';
 import { loadWatermark, setCustomWatermark, clearCustomWatermark, watermarkInfo } from '../app/watermark-asset.js';
@@ -57,6 +58,7 @@ export function initSettings() {
   $('#set-discover-prefix').value = guessSubnet();
 
   on($('#test-camera'), 'click', onTestCamera);
+  on($('#test-uploads'), 'click', onTestUploads);
   on($('#discover-camera'), 'click', onDiscover);
   on($('#cors-read'), 'click', onCorsRead);
   on($('#cors-write'), 'click', onCorsWrite);
@@ -133,9 +135,11 @@ async function onTestCamera() {
     const d = await diagnoseCamera(url, { timeoutMs: 6000 });
     const ok = d.verdict === 'ok';
 
-    const lines = [ok ? `OK — ${d.headline}` : `${d.verdict.toUpperCase()} — ${d.headline}`];
+    const lines = [ok ? `✓ ${d.headline}` : `✕ ${d.headline}`];
     if (ok) {
-      lines.push('', 'Resolved endpoints (matched by path suffix, not by assumed version):', d.detail);
+      if (settings.load().verboseErrors) {
+        lines.push('', 'Resolved endpoints (matched by path suffix, not by assumed version):', d.detail);
+      }
     } else {
       lines.push('', ...d.steps.map((s) => (s.startsWith('    ') ? s : `  • ${s}`)));
       if (settings.load().verboseErrors) lines.push('', '--- detail ---', d.detail);
@@ -153,12 +157,31 @@ async function onTestCamera() {
   }
 }
 
+async function onTestUploads() {
+  const btn = $('#test-uploads');
+  const out = $('#uploads-test-result');
+  // Test what is in the fields now, even if a change event has not fired yet.
+  const s = settings.save({
+    backendUrl: $('#set-backend-url').value,
+    backendToken: $('#set-backend-token').value,
+  });
+  reflect();
+  btn.disabled = true;
+  result(out, 'Checking…');
+  try {
+    const { ok, message } = await inventory.checkUploads(s);
+    result(out, `${ok ? '✓' : '✕'} ${message}`, ok);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function onDiscover() {
   const btn = $('#discover-camera');
   const out = $('#discover-result');
   const prefix = $('#set-discover-prefix').value.trim();
   if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(prefix)) {
-    result(out, 'Enter the first three octets, e.g. 192.168.1', false);
+    result(out, 'Set "Network to search" under Advanced to the first three numbers of the address, e.g. 192.168.1', false);
     return;
   }
   btn.disabled = true;
@@ -172,9 +195,9 @@ async function onDiscover() {
     if (found.length === 0) {
       result(
         out,
-        `No camera answered on ${prefix}.1–254 (ports 8080, 80).\n` +
-          'A camera that has not been told to allow this origin fails exactly like an absent host, ' +
-          'so configure CORS on the camera first (§3.6).',
+        `No camera found on ${prefix}.x.\n` +
+          "Check the camera is on with Wi-Fi connected, or type its address in. A camera that hasn't " +
+          'allowed this page (Advanced → Camera CORS) is invisible to the search.',
         false,
       );
       return;
@@ -182,7 +205,7 @@ async function onDiscover() {
     const first = found[0];
     settings.save({ cameraUrl: first.baseUrl });
     $('#set-camera-url').value = first.baseUrl;
-    result(out, `Found ${first.model ?? 'CCAPI camera'} at ${first.baseUrl} — saved.`, true);
+    result(out, `✓ Found ${first.model ?? 'a Canon camera'} at ${first.baseUrl} — saved.`, true);
   } catch (err) {
     result(out, `Scan failed: ${err.message}`, false);
   } finally {

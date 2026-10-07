@@ -4,15 +4,14 @@
  */
 
 import { $, $$, on, toast } from './ui/dom.js';
-import { initStatus } from './ui/status.js';
-import { initGallery, onGalleryShown, render as renderGallery } from './ui/gallery.js';
+import { initStatus, reportBackgrounded } from './ui/status.js';
+import { initGallery, onGalleryShown, setFilter as setGalleryFilter, render as renderGallery } from './ui/gallery.js';
 import { initCameraBrowser, onCameraShown } from './ui/camera.js';
 import { initSettings, onSettingsShown } from './ui/settings-ui.js';
 import { orchestrator } from './app/orchestrator.js';
 import * as imaging from './app/imaging-client.js';
 import { loadWatermark } from './app/watermark-asset.js';
 import * as blobstore from './core/blobstore.js';
-import * as settings from './core/settings.js';
 import { log } from './core/log.js';
 
 const SHOWN = {
@@ -21,25 +20,54 @@ const SHOWN = {
   settings: onSettingsShown,
 };
 
+/**
+ * Switch tabs. `focus` scrolls to and focuses a control (setup checklist
+ * buttons land on the field to fill in); `filter` presets the Photos filter.
+ */
+function navigate(name, { focus, filter } = {}) {
+  const tab = $(`.tab[data-tab="${name}"]`);
+  if (!tab) return;
+  $$('.tab').forEach((t) => t.classList.toggle('is-active', t === tab));
+  $$('.panel').forEach((p) => p.classList.toggle('is-active', p.dataset.panel === name));
+  history.replaceState(null, '', `#${name}`);
+  if (filter && name === 'gallery') setGalleryFilter(filter);
+  void SHOWN[name]?.();
+
+  const target = focus ? $(focus) : null;
+  if (target) {
+    const details = target.closest('details');
+    if (details) details.open = true;
+    target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    target.focus({ preventScroll: true });
+  } else {
+    window.scrollTo({ top: 0 });
+  }
+}
+
 function initTabs() {
-  for (const tab of $$('.tab')) {
-    on(tab, 'click', () => {
-      const name = tab.dataset.tab;
-      $$('.tab').forEach((t) => t.classList.toggle('is-active', t === tab));
-      $$('.panel').forEach((p) => p.classList.toggle('is-active', p.dataset.panel === name));
-      location.hash = name;
-      void SHOWN[name]?.();
+  for (const tab of $$('.tab')) on(tab, 'click', () => navigate(tab.dataset.tab));
+  // `#status` was the Shoot tab's old name; keep old bookmarks working.
+  const initial = location.hash.slice(1).replace(/^status$/, 'shoot');
+  if (initial && initial !== 'shoot') navigate(initial);
+}
+
+function initDialogs() {
+  on($('#open-help'), 'click', () => $('#help-dialog').showModal());
+  for (const btn of $$('[data-close-dialog]')) on(btn, 'click', () => btn.closest('dialog')?.close());
+  // Tap outside a dialog's box closes it.
+  for (const dialog of $$('dialog')) {
+    on(dialog, 'click', (event) => {
+      if (event.target === dialog) dialog.close();
     });
   }
-  const initial = location.hash.slice(1);
-  if (initial && $(`.tab[data-tab="${initial}"]`)) $(`.tab[data-tab="${initial}"]`).click();
 }
 
 async function boot() {
-  log.info('DNR Watermark starting');
+  log.info('DNR Camera Companion starting');
 
   initTabs();
-  initStatus();
+  initDialogs();
+  initStatus({ navigate });
   initGallery();
   initCameraBrowser();
   initSettings();
@@ -64,10 +92,6 @@ async function boot() {
   await orchestrator.restore();
   await renderGallery();
 
-  if (!settings.load().cameraUrl) {
-    toast('Set the camera URL in Settings to begin', 'info', 8000);
-  }
-
   // ---- lifecycle ---------------------------------------------------------
 
   // Re-acquire the wake lock when the tab comes back, and tell the operator
@@ -84,7 +108,8 @@ async function boot() {
       if (hiddenAt && orchestrator.running) {
         const seconds = Math.round((Date.now() - hiddenAt) / 1000);
         if (seconds > 5) {
-          log.warn(`Tab was backgrounded for ${seconds}s — run "Re-sync newest 60" if frames are missing`);
+          log.warn(`Tab was backgrounded for ${seconds}s — photos taken meanwhile may be missing`);
+          reportBackgrounded(seconds);
         }
       }
       hiddenAt = null;

@@ -128,7 +128,13 @@ export async function createDraft(sku, images, s = settings.load(), signal) {
   return res;
 }
 
-/** S3 object key for a photo. §4's example is `listings/IMG_0017.JPG`. */
+/**
+ * S3 object key for a photo. §4's example is `listings/IMG_0017.JPG`.
+ *
+ * This is a hint: the backend appends a unique suffix (Canon numbers wrap at
+ * 9999, so the bare filename would overwrite an older listing's photo) and
+ * returns the real key/publicUrl, which are what get stored.
+ */
 export function objectKey(photo, s = settings.load()) {
   const prefix = (s.keyPrefix || 'listings/').replace(/^\/+/, '');
   return `${prefix.endsWith('/') ? prefix : `${prefix}/`}${photo.fileName}`;
@@ -234,6 +240,7 @@ export async function uploadSku(sku, opts = {}) {
 const queue = [];
 const queued = new Set();
 let running = false;
+let activeSku = null;
 
 export function enqueueSku(sku) {
   if (queued.has(sku)) return false;
@@ -251,12 +258,15 @@ async function drain() {
     while (queue.length > 0) {
       const sku = queue.shift();
       queued.delete(sku);
+      activeSku = sku;
       fire('upload:started', { sku });
       try {
         await uploadSku(sku, { onProgress: (p) => fire('upload:progress', { sku, ...p }) });
       } catch (err) {
         log.error(`SKU ${sku} upload incomplete`, err.message);
         fire('upload:failed', { sku, error: err.message });
+      } finally {
+        activeSku = null;
       }
     }
   } finally {
@@ -273,6 +283,15 @@ export function isRunning() {
   return running;
 }
 
+/** SKU being uploaded right now, or null. */
+export function currentSku() {
+  return activeSku;
+}
+
+export function isQueued(sku) {
+  return queued.has(sku);
+}
+
 /** SKUs with at least one FAILED photo — drives the retry banner (§7). */
 export async function failedSkus() {
   const failed = await db.photosByStatus(db.STATUS.FAILED);
@@ -285,6 +304,14 @@ export async function failedSkus() {
     if (p.error) entry.lastError = p.error;
   }
   return [...bySku.values()];
+}
+
+/** Upload (or retry) one SKU: clear its FAILED markers and queue it. */
+export async function retrySku(sku) {
+  for (const p of await db.photosBySku(sku)) {
+    if (p.status === db.STATUS.FAILED) await db.updatePhoto(p.dcfKey, { status: db.STATUS.GROUPED, error: null });
+  }
+  return enqueueSku(sku);
 }
 
 /** Retry every SKU that has a failed photo. */

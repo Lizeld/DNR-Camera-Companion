@@ -46,9 +46,11 @@ export function askSku(count) {
   const countEl = $('#sku-dialog-count');
   if (!dialog) return Promise.resolve(null);
 
-  countEl.textContent = `${count} photo${count === 1 ? '' : 's'} will be assigned.`;
+  countEl.textContent = `${count} photo${count === 1 ? '' : 's'} will be filed under this SKU.`;
   input.value = '';
-  error.textContent = '';
+  error.dataset.hint ??= error.textContent;
+  error.textContent = error.dataset.hint;
+  error.classList.remove('is-error');
 
   return new Promise((resolve) => {
     const onClose = () => {
@@ -63,6 +65,7 @@ export function askSku(count) {
       if (event.submitter?.value === 'ok' && !/^\d{7}$/.test(input.value.trim())) {
         event.preventDefault();
         error.textContent = 'A SKU is exactly 7 digits.';
+        error.classList.add('is-error');
       }
     };
     dialog.showModal();

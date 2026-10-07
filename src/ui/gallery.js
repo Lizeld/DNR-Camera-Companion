@@ -14,6 +14,15 @@ import * as uploader from '../app/uploader.js';
 import { orchestrator } from '../app/orchestrator.js';
 import { on as onBus, log, relativeTime, formatBytes } from '../core/log.js';
 
+/** What each pipeline status means to the operator. */
+const STATUS_LABELS = {
+  PENDING: 'Current part — waiting for its label',
+  GROUPED: 'Has a SKU, not uploaded yet',
+  REVIEW: 'Needs a SKU — no label was found',
+  UPLOADED: 'In Inventory',
+  FAILED: 'Upload failed',
+};
+
 const selection = new Set();
 const urls = new ObjectUrlPool();
 let filter = 'ALL';
@@ -26,8 +35,7 @@ export function initGallery() {
 
   for (const chip of $$('#gallery-filters .chip')) {
     on(chip, 'click', () => {
-      $$('#gallery-filters .chip').forEach((c) => c.classList.toggle('is-active', c === chip));
-      filter = chip.dataset.filter;
+      setFilter(chip.dataset.filter);
       void render();
     });
   }
@@ -55,8 +63,13 @@ export function initGallery() {
     dirty = true;
     if (isVisible()) void render();
   });
+}
 
-  on($('#photo-dialog').querySelector('[data-close-dialog]'), 'click', () => $('#photo-dialog').close());
+/** Select a filter chip; the caller (or the tab switch) renders. */
+export function setFilter(next) {
+  filter = next;
+  dirty = true;
+  $$('#gallery-filters .chip').forEach((c) => c.classList.toggle('is-active', c.dataset.filter === next));
 }
 
 function isVisible() {
@@ -83,7 +96,7 @@ export async function render() {
   const rows = visible();
   show($('#gallery-empty'), rows.length === 0);
   $('#gallery-empty').textContent =
-    photos.length === 0 ? 'No photos held locally yet.' : 'No photos match this filter.';
+    photos.length === 0 ? 'No photos on this device yet.' : 'Nothing here right now.';
 
   // Drop selections for photos that no longer exist.
   const live = new Set(photos.map((p) => p.dcfKey));
@@ -107,7 +120,7 @@ function tile(photo) {
   const cached = urls.get(photo.dcfKey);
   el.innerHTML = `
     ${cached ? `<img alt="${photo.fileName}" src="${cached}">` : '<div class="thumb-placeholder">…</div>'}
-    <span class="status-dot status-${photo.status}" title="${photo.status}"></span>
+    <span class="status-dot status-${photo.status}" title="${STATUS_LABELS[photo.status] ?? photo.status}"></span>
     <div class="thumb-caption">
       <span>${photo.fileName}</span>
       <span class="sku">${photo.sku ?? ''}</span>
@@ -160,7 +173,7 @@ async function openViewer(photo) {
   }
 
   $('#photo-dialog-meta').textContent = [
-    `status      ${photo.status}`,
+    `status      ${STATUS_LABELS[photo.status] ?? photo.status}`,
     `sku         ${photo.sku ?? '—'}`,
     `frame       ${photo.sequenceNumber ?? '—'}`,
     `size        ${photo.width ?? '?'}x${photo.height ?? '?'}  ${formatBytes(photo.bytes ?? 0)}`,
@@ -198,7 +211,7 @@ async function onGroup() {
   if (!sku) return;
   await orchestrator.manualGroup(keys, sku);
   selection.clear();
-  toast(`${keys.length} photo(s) assigned to SKU ${sku}`, 'ok');
+  toast(`${keys.length} photo(s) assigned to SKU ${sku} — press Upload to send them`, 'ok');
   await render();
 }
 
@@ -208,19 +221,11 @@ async function onUpload() {
   const ungrouped = rows.filter((p) => !p.sku);
 
   if (ungrouped.length > 0) {
-    toast(`${ungrouped.length} selected photo(s) have no SKU — group them first`, 'error');
+    toast(`${ungrouped.length} selected photo(s) have no SKU yet — use Assign SKU first`, 'error');
     if (skus.length === 0) return;
   }
-  for (const sku of skus) {
-    // Clear any FAILED marker so the records are eligible again (per-SKU retry).
-    for (const p of rows) {
-      if (p.sku === sku && p.status === db.STATUS.FAILED) {
-        await db.updatePhoto(p.dcfKey, { status: db.STATUS.GROUPED, error: null });
-      }
-    }
-    uploader.enqueueSku(sku);
-  }
-  toast(`Queued ${skus.length} SKU(s) for upload`, 'ok');
+  for (const sku of skus) await uploader.retrySku(sku);
+  toast(`Uploading ${skus.length} part(s) — progress is on the Shoot tab`, 'ok');
   selection.clear();
   await render();
 }
@@ -230,9 +235,9 @@ async function onDelete() {
   if (rows.length === 0) return;
   const notUploaded = rows.filter((p) => p.status !== db.STATUS.UPLOADED).length;
   const warning = notUploaded
-    ? `\n\n${notUploaded} of these have NOT been uploaded. This cannot be undone.`
+    ? `\n\n${notUploaded} of these are NOT in Inventory yet and will be lost. This cannot be undone.`
     : '';
-  if (!confirm(`Delete ${rows.length} photo(s) from local storage?${warning}`)) return;
+  if (!confirm(`Delete ${rows.length} photo(s) from this device?${warning}`)) return;
 
   for (const p of rows) {
     await blobstore.remove(p.opfsPath);

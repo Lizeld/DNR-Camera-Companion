@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark light">
-<title>DNR Watermark</title>
+<title>DNR Camera Companion</title>
 <link rel="stylesheet" href="styles.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23465a78'/><text x='16' y='22' font-family='sans-serif' font-size='14' font-weight='700' fill='white' text-anchor='middle'>D</text></svg>">
 </head>
@@ -13,132 +13,171 @@
 <header class="topbar">
   <div class="brand">
     <span class="brand-mark">DNR</span>
-    <span class="brand-name">Watermark</span>
+    <span class="brand-name">Camera Companion</span>
   </div>
   <div class="topbar-status">
-    <span id="connection-pill" class="pill pill-offline">
-      <span class="dot"></span><span id="connection-label">Offline</span>
+    <span id="connection-pill" class="pill pill-offline" title="Camera connection">
+      <span class="dot"></span><span id="connection-label">Not shooting</span>
     </span>
-    <button id="run-toggle" class="btn btn-primary">Start</button>
+    <button id="open-help" class="btn btn-ghost btn-small btn-on-bar" aria-label="Help">Help</button>
+    <button id="run-toggle" class="btn btn-primary">Start shooting</button>
   </div>
 </header>
 
 <nav class="tabs" role="tablist">
-  <button class="tab is-active" data-tab="status" role="tab">Status</button>
-  <button class="tab" data-tab="gallery" role="tab">Gallery</button>
-  <button class="tab" data-tab="camera" role="tab">Camera</button>
+  <button class="tab is-active" data-tab="shoot" role="tab">Shoot</button>
+  <button class="tab" data-tab="gallery" role="tab">Photos</button>
+  <button class="tab" data-tab="camera" role="tab">Camera card</button>
   <button class="tab" data-tab="settings" role="tab">Settings</button>
 </nav>
 
 <main>
-  <!-- ================= STATUS ================= -->
-  <section class="panel is-active" data-panel="status">
-
-    <div id="foreground-notice" class="banner banner-info">
-      <div>
-        <strong>Foreground only.</strong>
-        A browser cannot poll the camera while this tab is backgrounded or closed (§5.2).
-        Keep this tab visible for the whole shoot.
-        <span id="wakelock-note"></span>
-      </div>
-      <button class="btn btn-ghost btn-small" data-dismiss="foreground-notice">Dismiss</button>
-    </div>
+  <!-- ================= SHOOT ================= -->
+  <section class="panel is-active" data-panel="shoot">
 
     <div id="upload-failure-banner" class="banner banner-error" hidden>
       <div>
-        <strong>Uploads failed.</strong>
+        <strong>Some parts didn't reach Inventory.</strong>
         <span id="upload-failure-detail"></span>
+        Their photos are safe on this device.
       </div>
       <button id="retry-uploads" class="btn btn-danger btn-small">Retry all</button>
     </div>
 
-    <div class="grid">
-      <div class="card card-pending">
-        <div class="card-label">Pending group</div>
-        <div id="pending-count" class="figure">0</div>
-        <div class="progress">
-          <div id="pending-bar" class="progress-fill" style="width:0%"></div>
-          <div id="pending-marker" class="progress-marker" title="Stale warning"></div>
+    <div id="missed-banner" class="banner banner-warn" hidden>
+      <div>
+        <strong>This screen was in the background.</strong>
+        <span id="missed-detail"></span>
+      </div>
+      <div class="banner-actions">
+        <button id="missed-resync" class="btn btn-small">Check for missed photos</button>
+        <button class="btn btn-ghost btn-small" data-dismiss="missed-banner">Dismiss</button>
+      </div>
+    </div>
+
+    <div id="review-banner" class="banner banner-warn" hidden>
+      <div>
+        <strong id="review-title">Photos need a SKU.</strong>
+        No label was found for them, so they were set aside instead of uploaded.
+      </div>
+      <button id="open-review" class="btn btn-small">Sort them out</button>
+    </div>
+
+    <!-- Shown while stopped: what to do, and whether setup is complete. -->
+    <div id="ready-card" class="hero">
+      <h1 id="ready-title" class="hero-title">Ready to shoot</h1>
+      <ol class="steps">
+        <li><span class="step-num">1</span><div><b>Photograph the part</b><span>From every angle you want in the listing.</span></div></li>
+        <li><span class="step-num">2</span><div><b>Finish with the SKU label</b><span>A close-up of the barcode sticker, as the last photo.</span></div></li>
+        <li><span class="step-num">3</span><div><b>Move on to the next part</b><span>The photos are watermarked and sent to Inventory as a draft automatically.</span></div></li>
+      </ol>
+      <ul id="checklist" class="checklist" aria-label="Setup"></ul>
+      <div class="hero-actions">
+        <button id="start-big" class="btn btn-primary btn-hero">Start shooting</button>
+      </div>
+      <p class="muted hero-note">Keep this screen open while you shoot. If it goes to the background, photos pause until you come back.</p>
+    </div>
+
+    <!-- Shown while running: the part being shot right now. -->
+    <div id="live-card" class="hero hero-live" hidden>
+      <div id="live-flash" class="flash" hidden></div>
+      <div class="live-head">
+        <div class="live-count">
+          <div class="card-label">Current part</div>
+          <div><span id="pending-count" class="figure">0</span> <span id="pending-unit" class="figure-unit">photos</span></div>
         </div>
-        <div id="pending-hint" class="card-hint">0 of 35 to auto-evacuate</div>
+        <p id="live-instruction" class="instruction">Take the first photo of the part.</p>
       </div>
-
-      <div class="card">
-        <div class="card-label">Last SKU</div>
-        <div id="last-sku" class="figure figure-small">—</div>
-        <div id="last-sku-time" class="card-hint">never</div>
+      <div class="progress" title="Photos without a label">
+        <div id="pending-bar" class="progress-fill" style="width:0%"></div>
+        <div id="pending-marker" class="progress-marker"></div>
       </div>
-
-      <div class="card">
-        <div class="card-label">Last photo</div>
-        <div id="last-photo" class="figure figure-small">—</div>
-        <div id="last-photo-time" class="card-hint">never</div>
-      </div>
-
-      <div class="card">
-        <div class="card-label">Queue</div>
-        <div id="queue-depth" class="figure figure-small">0</div>
-        <div id="queue-hint" class="card-hint">nothing waiting</div>
+      <div id="pending-strip" class="strip" aria-label="Photos of the current part"></div>
+      <div class="live-foot">
+        <span id="queue-hint" class="muted"></span>
+        <button id="action-clear-pending" class="btn btn-ghost btn-small">Set these photos aside</button>
       </div>
     </div>
 
-    <div class="row row-stats">
-      <span>Processed <b id="stat-processed">0</b></span>
-      <span>Polls <b id="stat-polls">0</b></span>
-      <span>Busy responses <b id="stat-transient">0</b></span>
-      <span>Uploads queued <b id="stat-uploads">0</b></span>
-      <span>Storage <b id="stat-storage">—</b></span>
-    </div>
+    <h2 class="section-title">Recent parts</h2>
+    <div id="parts-list" class="parts"></div>
+    <div id="parts-empty" class="empty">Each part you shoot shows up here, with its upload status.</div>
 
-    <div class="row row-actions">
-      <button id="action-resync" class="btn">Re-sync newest 60</button>
-      <button id="action-clear-pending" class="btn">Move pending to review</button>
-      <label class="check">
-        <input type="checkbox" id="verbose-toggle"> Verbose errors
-      </label>
-      <label class="check">
-        <input type="checkbox" id="autoscroll-toggle" checked> Auto-scroll log
-      </label>
-      <button id="action-clear-log" class="btn btn-ghost btn-small">Clear log</button>
-    </div>
-
-    <h2 class="section-title">Activity</h2>
-    <div id="activity-log" class="log" role="log" aria-live="polite"></div>
+    <details class="details" id="tech-details">
+      <summary>Technical details</summary>
+      <div class="grid">
+        <div class="card">
+          <div class="card-label">Last SKU</div>
+          <div id="last-sku" class="figure figure-small">—</div>
+          <div id="last-sku-time" class="card-hint">never</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Last photo</div>
+          <div id="last-photo" class="figure figure-small">—</div>
+          <div id="last-photo-time" class="card-hint">never</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Download queue</div>
+          <div id="queue-depth" class="figure figure-small">0</div>
+          <div id="queue-detail" class="card-hint">nothing waiting</div>
+        </div>
+      </div>
+      <div class="row row-stats">
+        <span>Processed <b id="stat-processed">0</b></span>
+        <span>Polls <b id="stat-polls">0</b></span>
+        <span>Busy responses <b id="stat-transient">0</b></span>
+        <span>Uploads queued <b id="stat-uploads">0</b></span>
+        <span>Storage <b id="stat-storage">—</b></span>
+      </div>
+      <div class="row row-actions">
+        <button id="action-resync" class="btn">Check newest 60 on the card</button>
+        <label class="check"><input type="checkbox" id="verbose-toggle"> Verbose errors</label>
+        <label class="check"><input type="checkbox" id="autoscroll-toggle" checked> Auto-scroll log</label>
+        <button id="action-clear-log" class="btn btn-ghost btn-small">Clear log</button>
+      </div>
+      <h3 class="section-title">Activity log</h3>
+      <div id="activity-log" class="log" role="log" aria-live="polite"></div>
+    </details>
   </section>
 
-  <!-- ================= GALLERY ================= -->
+  <!-- ================= PHOTOS ================= -->
   <section class="panel" data-panel="gallery">
+    <p class="muted hint lead">
+      Every photo held on this device. To fix a part by hand, select its photos and choose
+      <b>Assign SKU</b>, then <b>Upload</b>. Uploaded photos are removed from this device once they're in Inventory.
+    </p>
     <div class="toolbar">
       <div class="filters" id="gallery-filters">
         <button class="chip is-active" data-filter="ALL">All</button>
-        <button class="chip" data-filter="PENDING">Pending</button>
-        <button class="chip" data-filter="GROUPED">Grouped</button>
-        <button class="chip" data-filter="REVIEW">Review</button>
-        <button class="chip" data-filter="FAILED">Failed</button>
+        <button class="chip" data-filter="REVIEW">Needs SKU</button>
+        <button class="chip" data-filter="PENDING">Current part</button>
+        <button class="chip" data-filter="GROUPED">Not uploaded yet</button>
+        <button class="chip" data-filter="FAILED">Upload failed</button>
         <button class="chip" data-filter="UPLOADED">Uploaded</button>
       </div>
       <div class="toolbar-actions">
         <span id="gallery-selection" class="muted">0 selected</span>
         <button id="gallery-select-all" class="btn btn-small">Select all</button>
         <button id="gallery-clear-selection" class="btn btn-small">Clear</button>
-        <button id="gallery-group" class="btn btn-small btn-primary" disabled>Group…</button>
+        <button id="gallery-group" class="btn btn-small btn-primary" disabled>Assign SKU…</button>
         <button id="gallery-upload" class="btn btn-small btn-primary" disabled>Upload</button>
         <button id="gallery-delete" class="btn btn-small btn-danger" disabled>Delete</button>
       </div>
     </div>
-    <p class="muted hint">
-      Drag on empty space to rubber-band select. These manual paths are the recovery
-      mechanism when automatic grouping goes wrong.
-    </p>
+    <p class="muted hint">Tap a photo to view it. Once one is selected, taps add to the selection; drag across empty space to select several.</p>
     <div id="gallery-grid" class="grid-photos"></div>
-    <div id="gallery-empty" class="empty">No photos held locally yet.</div>
+    <div id="gallery-empty" class="empty">No photos on this device yet.</div>
   </section>
 
-  <!-- ================= CAMERA BROWSER ================= -->
+  <!-- ================= CAMERA CARD ================= -->
   <section class="panel" data-panel="camera">
+    <p class="muted hint lead">
+      Browse the camera's memory card and pull in photos that were missed — for example ones taken
+      while this screen was closed. Newest first.
+    </p>
     <div class="toolbar">
       <div class="toolbar-actions">
-        <select id="camera-folder" class="input input-select"><option>—</option></select>
+        <select id="camera-folder" class="input input-select" aria-label="Folder"><option>—</option></select>
         <button id="camera-refresh" class="btn btn-small">Refresh</button>
         <button id="camera-more" class="btn btn-small">Load 100 more</button>
         <span id="camera-count" class="muted"></span>
@@ -146,150 +185,198 @@
       <div class="toolbar-actions">
         <span id="camera-selection" class="muted">0 selected</span>
         <button id="camera-clear" class="btn btn-small">Clear</button>
-        <button id="camera-ingest" class="btn btn-small btn-primary" disabled>Download into pipeline</button>
+        <button id="camera-ingest" class="btn btn-small btn-primary" disabled>Add to this device</button>
       </div>
     </div>
-    <p class="muted hint">Newest first. Thumbnails are fetched lazily — the camera link tops out around 2 MB/s.</p>
+    <p class="muted hint">Thumbnails load slowly — the camera's Wi-Fi is the bottleneck.</p>
     <div id="camera-grid" class="grid-photos"></div>
-    <div id="camera-empty" class="empty">Connect to the camera and press Refresh.</div>
+    <div id="camera-empty" class="empty">Turn the camera on and press Refresh.</div>
   </section>
 
   <!-- ================= SETTINGS ================= -->
   <section class="panel" data-panel="settings">
-    <h2 class="section-title">Camera</h2>
+    <h2 class="section-title" id="settings-camera">Camera</h2>
     <div class="field">
-      <label for="set-camera-url">Camera URL</label>
+      <label for="set-camera-url">Camera address</label>
       <div class="field-row">
-        <input id="set-camera-url" class="input" type="text" inputmode="url" placeholder="http://192.168.1.55:8080">
-        <button id="test-camera" class="btn">Test connection</button>
+        <input id="set-camera-url" class="input" type="text" inputmode="url" placeholder="e.g. 192.168.0.158">
+        <button id="test-camera" class="btn">Test</button>
+        <button id="discover-camera" class="btn">Find camera</button>
       </div>
       <p class="field-hint">
-        Use HTTP, port 8080. HTTPS costs about 30% throughput because the camera's SoC is the
-        bottleneck when encrypting, and TLS buys nothing on a LAN against a self-signed cert (§3.1).
+        The camera's IP address, shown in its Wi-Fi settings once it's connected. The camera and this
+        device must be on the same Wi-Fi. <b>Find camera</b> searches the network for it.
       </p>
       <div id="camera-test-result" class="result" hidden></div>
-    </div>
-
-    <div class="field">
-      <label for="set-discover-prefix">LAN auto-discovery</label>
-      <div class="field-row">
-        <input id="set-discover-prefix" class="input" type="text" placeholder="192.168.1">
-        <button id="discover-camera" class="btn">Scan subnet</button>
-      </div>
-      <p class="field-hint">
-        Probes <code>x.x.x.1–254</code> on ports 8080 and 80. Only positive results are meaningful:
-        a host that is not a CORS-enabled camera fails the same way an empty address does.
-      </p>
       <div id="discover-result" class="result" hidden></div>
     </div>
 
+    <h2 class="section-title" id="settings-uploads">Inventory uploads</h2>
     <div class="field">
-      <label>Camera CORS (§3.6)</label>
-      <div class="field-row">
-        <button id="cors-read" class="btn">Read config</button>
-        <button id="cors-write" class="btn">Allow this origin</button>
-        <code id="cors-origin" class="muted"></code>
-      </div>
-      <p class="field-hint">
-        CORS is what makes a browser client viable at all. The write payload shape is not documented,
-        so this tries the plausible variants and shows exactly what the camera replied.
-      </p>
-      <div id="cors-result" class="result" hidden></div>
-    </div>
-
-    <h2 class="section-title">Backend</h2>
-    <div class="field">
-      <label for="set-backend-url">Backend URL</label>
-      <input id="set-backend-url" class="input" type="text" inputmode="url" placeholder="https://inventory.example.com">
-      <p class="field-hint">
-        Resolved endpoint base: <code id="backend-resolved">—</code>.
-        The <code>/api</code> prefix and <code>https://</code> are forced: root paths hit the SPA and
-        return nginx 405, and an <code>http://</code> base 301-redirects, downgrading POST to GET (§4).
-        Enter <code>/backend</code> instead to go through this server's proxy
-        (<code>python serve.py --backend &lt;url&gt;</code>), which makes uploads same-origin and so
-        needs no CORS grant from the backend or the bucket.
-      </p>
+      <label for="set-backend-url">Inventory site address</label>
+      <input id="set-backend-url" class="input" type="text" inputmode="url" placeholder="e.g. inventory.example.com">
     </div>
     <div class="field">
-      <label for="set-backend-token">Bearer token</label>
+      <label for="set-backend-token">Upload token</label>
       <div class="field-row">
-        <input id="set-backend-token" class="input" type="password" autocomplete="off" placeholder="paste token">
+        <input id="set-backend-token" class="input" type="password" autocomplete="off" placeholder="paste the token">
         <button id="toggle-token" class="btn">Show</button>
+        <button id="test-uploads" class="btn">Test</button>
       </div>
-      <p class="field-hint">Stored in this browser's localStorage. Currently: <code id="token-mask">(not set)</code></p>
+      <p class="field-hint">From the Inventory site's admin (<code>WATERMARK_APP_TOKEN</code>). Saved on this device only. Currently: <code id="token-mask">(not set)</code></p>
+      <div id="uploads-test-result" class="result" hidden></div>
     </div>
     <div class="field">
-      <label for="set-key-prefix">S3 key prefix</label>
-      <input id="set-key-prefix" class="input" type="text" placeholder="listings/">
+      <label class="check"><input type="checkbox" id="set-autoupload"> Upload each part automatically once its label is found</label>
+    </div>
+
+    <details class="details details-settings">
+      <summary>Advanced</summary>
+
+      <h3 class="section-title">Camera connection</h3>
       <p class="field-hint">
-        The bucket needs CORS allowing <code>PUT</code> from <code id="origin-echo"></code> with the
-        <code>Content-Type</code> header. Android did not need this; browsers do — unless the
-        <code>/backend</code> proxy is carrying the upload, in which case the bucket only ever sees
-        this server.
+        Use plain HTTP on port 8080 — HTTPS is about 30% slower because the camera's processor does the
+        encryption, and it adds nothing on a local network (§3.1).
       </p>
-    </div>
+      <div class="field">
+        <label for="set-discover-prefix">Network to search</label>
+        <input id="set-discover-prefix" class="input" type="text" placeholder="192.168.1">
+        <p class="field-hint">
+          <b>Find camera</b> probes <code>x.x.x.1–254</code> on ports 8080 and 80. A camera that hasn't
+          allowed this page (CORS, below) looks exactly like an empty address.
+        </p>
+      </div>
+      <div class="field">
+        <label>Camera CORS (§3.6)</label>
+        <div class="field-row">
+          <button id="cors-read" class="btn">Read config</button>
+          <button id="cors-write" class="btn">Allow this origin</button>
+          <code id="cors-origin" class="muted"></code>
+        </div>
+        <p class="field-hint">
+          The camera must be told to accept this page's origin, and it forgets after a power cycle.
+          <code>python serve.py --camera &lt;ip&gt;</code> keeps it set for you. The write payload isn't
+          documented, so this tries the plausible variants and shows exactly what the camera replied.
+        </p>
+        <div id="cors-result" class="result" hidden></div>
+      </div>
 
-    <h2 class="section-title">Watermark</h2>
-    <div class="field-grid">
+      <h3 class="section-title">Upload API</h3>
       <div class="field">
-        <label for="set-padding">Padding (px)</label>
-        <input id="set-padding" class="input" type="number" min="0" max="2000" step="1">
+        <p class="field-hint">
+          Resolved endpoint base: <code id="backend-resolved">—</code>.
+          <code>/api</code> and <code>https://</code> are added automatically: root paths hit the site's
+          frontend (405), and an <code>http://</code> address redirects POST into GET (§4).
+          Enter <code>/backend</code> as the site address to route uploads through this server's proxy
+          (<code>python serve.py --backend &lt;url&gt;</code>); it avoids needing CORS grants from the
+          site and the bucket.
+        </p>
       </div>
       <div class="field">
-        <label for="set-quality">JPEG quality</label>
-        <input id="set-quality" class="input" type="number" min="1" max="100" step="1">
+        <label for="set-key-prefix">S3 key prefix</label>
+        <input id="set-key-prefix" class="input" type="text" placeholder="listings/">
+        <p class="field-hint">
+          Without the proxy, the bucket needs CORS allowing <code>PUT</code> from
+          <code id="origin-echo"></code> with the <code>Content-Type</code> header.
+        </p>
       </div>
-    </div>
-    <div class="field">
-      <label for="set-watermark-file">Watermark PNG</label>
-      <div class="field-row">
-        <input id="set-watermark-file" class="input" type="file" accept="image/png,image/*">
-        <button id="reset-watermark" class="btn">Use bundled asset</button>
+
+      <h3 class="section-title">Watermark</h3>
+      <div class="field-grid">
+        <div class="field">
+          <label for="set-padding">Padding (px)</label>
+          <input id="set-padding" class="input" type="number" min="0" max="2000" step="1">
+        </div>
+        <div class="field">
+          <label for="set-quality">JPEG quality</label>
+          <input id="set-quality" class="input" type="number" min="1" max="100" step="1">
+        </div>
+      </div>
+      <div class="field">
+        <label for="set-watermark-file">Watermark PNG</label>
+        <div class="field-row">
+          <input id="set-watermark-file" class="input" type="file" accept="image/png,image/*">
+          <button id="reset-watermark" class="btn">Use bundled asset</button>
+        </div>
+        <p class="field-hint">
+          Current: <code id="watermark-info">—</code>. Placed bottom-left at the padding inset; scaled
+          down only if wider than 30% of the photo.
+        </p>
+        <canvas id="watermark-preview" class="preview" width="200" height="120"></canvas>
+      </div>
+
+      <h3 class="section-title">Grouping and polling</h3>
+      <div class="field-grid">
+        <div class="field">
+          <label for="set-stale">Warn after (photos)</label>
+          <input id="set-stale" class="input" type="number" min="1" max="500" step="1">
+        </div>
+        <div class="field">
+          <label for="set-evacuate">Set aside after (photos)</label>
+          <input id="set-evacuate" class="input" type="number" min="2" max="1000" step="1">
+        </div>
+        <div class="field">
+          <label for="set-poll">Poll interval (ms)</label>
+          <input id="set-poll" class="input" type="number" min="250" max="30000" step="50">
+        </div>
+        <div class="field">
+          <label for="set-attempts">Max download attempts</label>
+          <input id="set-attempts" class="input" type="number" min="1" max="100" step="1">
+        </div>
       </div>
       <p class="field-hint">
-        Current: <code id="watermark-info">—</code>. Pasted bottom-left at the padding inset; scaled
-        down only if wider than 30% of the base.
+        A part with no label found is warned about, then set aside for review, so a forgotten label
+        can't merge two parts into one draft.
       </p>
-      <canvas id="watermark-preview" class="preview" width="200" height="120"></canvas>
-    </div>
+      <div class="field">
+        <label class="check"><input type="checkbox" id="set-verbose"> Verbose errors</label>
+        <label class="check"><input type="checkbox" id="set-wakelock"> Keep the screen awake while shooting</label>
+        <label class="check"><input type="checkbox" id="set-notifications"> Desktop notifications (while this screen is open)</label>
+      </div>
 
-    <h2 class="section-title">Pipeline</h2>
-    <div class="field-grid">
-      <div class="field">
-        <label for="set-stale">Stale warning at</label>
-        <input id="set-stale" class="input" type="number" min="1" max="500" step="1">
+      <h3 class="section-title">Diagnostics</h3>
+      <dl id="diagnostics" class="diagnostics"></dl>
+      <div class="row row-actions">
+        <a class="btn" href="tests.html" target="_blank" rel="noopener">Open test suite</a>
+        <button id="export-log" class="btn">Export activity log</button>
+        <button id="danger-clear" class="btn btn-danger">Erase all local data</button>
       </div>
-      <div class="field">
-        <label for="set-evacuate">Auto-evacuate at</label>
-        <input id="set-evacuate" class="input" type="number" min="2" max="1000" step="1">
-      </div>
-      <div class="field">
-        <label for="set-poll">Poll interval (ms)</label>
-        <input id="set-poll" class="input" type="number" min="250" max="30000" step="50">
-      </div>
-      <div class="field">
-        <label for="set-attempts">Max queue attempts</label>
-        <input id="set-attempts" class="input" type="number" min="1" max="100" step="1">
-      </div>
-    </div>
-    <div class="field">
-      <label class="check"><input type="checkbox" id="set-autoupload"> Upload automatically when a group is flushed</label>
-      <label class="check"><input type="checkbox" id="set-verbose"> Verbose errors</label>
-      <label class="check"><input type="checkbox" id="set-wakelock"> Keep the screen awake while running</label>
-      <label class="check"><input type="checkbox" id="set-notifications"> Desktop notifications (foreground only)</label>
-    </div>
-
-    <h2 class="section-title">Diagnostics</h2>
-    <dl id="diagnostics" class="diagnostics"></dl>
-    <div class="row row-actions">
-      <a class="btn" href="tests.html" target="_blank" rel="noopener">Open test suite</a>
-      <button id="export-log" class="btn">Export activity log</button>
-      <button id="danger-clear" class="btn btn-danger">Erase all local data</button>
-    </div>
+    </details>
   </section>
 </main>
 
 <div id="toast-host" class="toast-host" aria-live="assertive"></div>
+
+<dialog id="help-dialog" class="dialog dialog-help">
+  <div class="dialog-head">
+    <strong>How to use the Camera Companion</strong>
+    <button class="btn btn-ghost btn-small" data-close-dialog>Close</button>
+  </div>
+  <ol class="steps steps-compact">
+    <li><span class="step-num">1</span><div><b>Press Start shooting</b><span>Keep this screen open and in front for the whole session.</span></div></li>
+    <li><span class="step-num">2</span><div><b>Photograph a part</b><span>As many angles as the listing needs.</span></div></li>
+    <li><span class="step-num">3</span><div><b>Last photo: the SKU label</b><span>That tells the app which part the photos belong to. They're then watermarked and sent to Inventory as a draft.</span></div></li>
+  </ol>
+
+  <h3 class="section-title">Getting the label read first time</h3>
+  <ul class="tips">
+    <li>Fill most of the frame with the label and keep it in focus.</li>
+    <li>Keep the label flat and avoid glare from lights.</li>
+    <li>One part at a time — shoot its label before starting the next part.</li>
+  </ul>
+
+  <h3 class="section-title">If something goes wrong</h3>
+  <dl class="faq">
+    <dt>"Camera not reachable"</dt>
+    <dd>Check the camera is on and its Wi-Fi is connected, and that this device is on the same Wi-Fi. If the camera went to sleep, half-press the shutter.</dd>
+    <dt>"Photos need a SKU"</dt>
+    <dd>The label wasn't read. Open <b>Photos → Needs SKU</b>, select that part's photos, choose <b>Assign SKU</b>, type the 7-digit number, then <b>Upload</b>.</dd>
+    <dt>"Didn't reach Inventory"</dt>
+    <dd>Press <b>Retry</b>. Nothing is lost — photos stay on this device until Inventory has them. If it keeps failing, check the internet connection, then <b>Settings → Inventory uploads → Test</b>.</dd>
+    <dt>I switched away from this screen</dt>
+    <dd>Come back and press <b>Check for missed photos</b>. Photos taken meanwhile are picked up from the camera's card.</dd>
+  </dl>
+</dialog>
 
 <dialog id="photo-dialog" class="dialog">
   <div class="dialog-head">
@@ -304,8 +391,8 @@
   <form method="dialog">
     <div class="dialog-head"><strong>Assign SKU</strong></div>
     <p class="muted" id="sku-dialog-count"></p>
-    <input id="sku-input" class="input" type="text" inputmode="numeric" pattern="\d{7}" maxlength="7" placeholder="7 digits">
-    <p class="field-hint" id="sku-error"></p>
+    <input id="sku-input" class="input input-sku" type="text" inputmode="numeric" pattern="\d{7}" maxlength="7" placeholder="7 digits" autocomplete="off">
+    <p class="field-hint" id="sku-error">The 7-digit number printed under the barcode.</p>
     <div class="dialog-actions">
       <button class="btn" value="cancel">Cancel</button>
       <button class="btn btn-primary" id="sku-confirm" value="ok">Assign</button>

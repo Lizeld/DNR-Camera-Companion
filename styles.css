@@ -1,4 +1,4 @@
-/* DNR Watermark — tablet-first dark UI.
+/* DNR Camera Companion — tablet-first dark UI.
    Touch targets are deliberately large: this is used one-handed, standing at a
    bench, by an operator holding a camera. */
 
@@ -70,6 +70,7 @@ code, pre, .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospa
   border-radius: 999px;
   font-size: 13px;
   background: rgba(0, 0, 0, 0.22);
+  white-space: nowrap;
 }
 .pill .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
 .pill-online  .dot { background: var(--ok);   box-shadow: 0 0 0 3px rgba(63,191,127,0.25); }
@@ -134,6 +135,8 @@ main { padding: 16px; max-width: 1400px; margin: 0 auto; }
 }
 .banner-info  { background: rgba(91,141,214,0.12); border-color: rgba(91,141,214,0.4); }
 .banner-error { background: rgba(224,90,90,0.14);  border-color: rgba(224,90,90,0.5); }
+.banner-warn  { background: rgba(224,163,60,0.13); border-color: rgba(224,163,60,0.5); }
+.banner-actions { display: flex; gap: 8px; flex-wrap: wrap; flex: 0 0 auto; }
 .banner[hidden] { display: none; }
 
 /* ---------- status cards ---------- */
@@ -155,6 +158,7 @@ main { padding: 16px; max-width: 1400px; margin: 0 auto; }
 .card-hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
 
 .figure { font-size: 46px; font-weight: 700; line-height: 1.1; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.card .figure { display: block; }
 .figure-small { font-size: 24px; }
 .figure.is-warning  { color: var(--warn); }
 .figure.is-critical { color: var(--err); }
@@ -193,6 +197,7 @@ main { padding: 16px; max-width: 1400px; margin: 0 auto; }
   align-items: center;
   justify-content: center;
   text-decoration: none;
+  white-space: nowrap;
 }
 .btn:hover:not(:disabled) { border-color: var(--accent); }
 .btn:disabled { opacity: 0.42; cursor: not-allowed; }
@@ -405,8 +410,208 @@ input[type="file"].input { padding: 8px; }
 .toast-ok    { border-color: var(--ok); }
 @keyframes rise { from { transform: translateY(8px); opacity: 0; } }
 
+/* ---------- shoot screen ---------- */
+
+.btn-on-bar { color: #fff; border-color: rgba(255,255,255,0.35); }
+
+.hero {
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 22px;
+  margin-bottom: 8px;
+}
+.hero[hidden] { display: none; }
+.hero-title { margin: 0 0 16px; font-size: 24px; }
+.hero-actions { margin-top: 18px; }
+.hero-note { margin: 12px 0 0; font-size: 13px; }
+.btn-hero { min-height: 60px; padding: 0 34px; font-size: 18px; border-radius: 12px; width: 100%; max-width: 420px; }
+
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+.steps li { display: flex; gap: 12px; align-items: flex-start; }
+.steps b { display: block; }
+.steps span:not(.step-num) { display: block; color: var(--muted); font-size: 13.5px; }
+.step-num {
+  flex: 0 0 auto;
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+}
+.steps-compact { grid-template-columns: 1fr; }
+
+.checklist { list-style: none; margin: 20px 0 0; padding: 0; display: grid; gap: 8px; }
+.checklist li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--line);
+}
+.check-label { flex: 1 1 auto; }
+.check-mark {
+  flex: 0 0 auto;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 12px; font-weight: 800;
+  color: #fff;
+  background: var(--muted);
+}
+.check-ok   .check-mark { background: var(--ok); }
+.check-todo .check-mark { background: var(--warn); }
+.check-warn .check-mark { background: var(--warn); }
+.check-bad  .check-mark { background: var(--err); }
+.check-info .check-mark { background: var(--accent); }
+.check-todo, .check-bad { border-color: rgba(224,163,60,0.5) !important; }
+
+.hero-live { position: relative; }
+.live-head { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }
+.live-count { flex: 0 0 auto; }
+.figure { display: inline; }
+.figure-unit { font-size: 18px; color: var(--muted); }
+.instruction { flex: 1 1 280px; margin: 0; font-size: 19px; font-weight: 600; line-height: 1.35; }
+.instruction.is-warning { color: var(--warn); }
+.instruction.is-critical { color: var(--err); }
+
+.flash {
+  margin: -6px 0 14px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(63,191,127,0.15);
+  border: 1px solid rgba(63,191,127,0.55);
+  color: var(--ok);
+  font-weight: 700;
+  font-size: 16px;
+  animation: rise 0.2s ease-out;
+}
+.flash[hidden] { display: none; }
+
+.strip {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.strip[hidden] { display: none; }
+.strip-thumb {
+  flex: 0 0 auto;
+  width: 96px;
+  aspect-ratio: 3 / 2;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-input);
+  border: 1px solid var(--line);
+  display: grid; place-items: center;
+  font-size: 10px; color: var(--muted);
+}
+.strip-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.live-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+
+.parts { display: grid; gap: 8px; }
+.part {
+  display: grid;
+  grid-template-columns: 72px 1fr auto auto;
+  gap: 14px;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.part-failed { border-color: rgba(224,90,90,0.55); }
+.part-thumb {
+  width: 72px;
+  aspect-ratio: 3 / 2;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-input);
+  border: 1px solid var(--line);
+}
+.part-thumb:empty {
+  /* No local bytes and no public URL yet: a quiet photo glyph. */
+  background: var(--bg-input) center / 26px no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238d9aad' stroke-width='1.6'%3E%3Crect x='3' y='6' width='18' height='14' rx='2'/%3E%3Ccircle cx='12' cy='13' r='3.5'/%3E%3Cpath d='M8 6l1.5-2h5L16 6'/%3E%3C/svg%3E");
+}
+.part-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.part-body { min-width: 0; }
+.part-sku { font: 700 18px/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace; letter-spacing: 0.04em; }
+.part-meta { color: var(--muted); font-size: 13px; }
+.part-error { color: var(--err); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.part-status { display: grid; gap: 6px; justify-items: end; min-width: 140px; }
+.part-actions { display: flex; gap: 8px; }
+.part-actions:empty { display: none; }
+
+.status-chip {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  background: var(--bg-input);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.chip-done      { color: var(--ok);     border-color: rgba(63,191,127,0.5); }
+.chip-uploading { color: var(--accent); border-color: rgba(91,141,214,0.5); }
+.chip-failed    { color: var(--err);    border-color: rgba(224,90,90,0.5); }
+.progress-thin { height: 4px; margin: 0; width: 140px; }
+
+.details {
+  margin-top: 26px;
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+}
+.details > summary {
+  cursor: pointer;
+  min-height: var(--tap);
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  font-weight: 600;
+}
+.details[open] > summary { margin-bottom: 10px; }
+.details-settings > summary { font-size: 15px; }
+h3.section-title { margin-top: 22px; }
+
+.lead { font-size: 14px; margin: 0 0 14px; max-width: 760px; }
+
+.dialog-help { max-width: 620px; }
+.tips { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.faq { margin: 0; display: grid; gap: 4px; }
+.faq dt { font-weight: 700; margin-top: 8px; }
+.faq dd { margin: 0; color: var(--muted); }
+
+.input-sku { font: 700 24px/1 ui-monospace, Consolas, monospace; letter-spacing: 0.15em; text-align: center; }
+.field-hint.is-error { color: var(--err); }
+
+@media (max-width: 720px) {
+  .part { grid-template-columns: 56px 1fr; }
+  .part-thumb { width: 56px; }
+  .part-status, .part-actions { grid-column: 2; justify-items: start; }
+  .hero { padding: 16px; }
+}
+
 @media (max-width: 600px) {
   main { padding: 12px; }
+  .topbar { padding: 8px 12px; gap: 8px; }
+  .brand-name { display: none; }
+  .topbar-status { gap: 6px; min-width: 0; }
+  .pill { padding: 5px 9px; font-size: 12px; }
+  .btn-on-bar { padding: 0 9px; }
+  #run-toggle { padding: 0 12px; }
   .figure { font-size: 38px; }
   .tabs { top: 50px; }
 }
