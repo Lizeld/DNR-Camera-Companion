@@ -549,6 +549,18 @@ input[type="file"].input { padding: 8px; }
 .part-sku { font: 700 18px/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace; letter-spacing: 0.04em; }
 .part-meta { color: var(--muted); font-size: 13px; }
 .part-error { color: var(--err); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.part-warn { color: var(--warn); font-size: 13px; }
+.part-found { font-size: 13.5px; margin-top: 2px; }
+.part-hint {
+  margin-top: 4px;
+  padding: 4px 8px;
+  border-left: 3px solid var(--warn);
+  background: rgba(224,163,60,0.1);
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.part-hint-how { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
 .part-status { display: grid; gap: 6px; justify-items: end; min-width: 140px; }
 .part-actions { display: flex; gap: 8px; }
 .part-actions:empty { display: none; }
@@ -622,3 +634,27 @@ h3.section-title { margin-top: 22px; }
   .figure { font-size: 38px; }
   .tabs { top: 50px; }
 }
+
+/* "Parting out": the donor car for the parts being shot. */
+.donor-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 14px;
+}
+.donor-label { font-weight: 600; }
+.donor-select {
+  min-height: var(--tap);
+  min-width: 0;
+  flex: 1 1 260px;
+  max-width: 480px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg-input);
+  color: var(--text);
+  font: inherit;
+}
+.donor-select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.donor-hint { font-size: 12.5px; flex-basis: 100%; }

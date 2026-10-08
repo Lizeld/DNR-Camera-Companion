@@ -440,6 +440,8 @@ export class Orchestrator {
         bytes: result.jpeg.size,
         width: result.width,
         height: result.height,
+        quality: result.quality ?? null,
+        isLabel: Boolean(sku),
       }),
     );
 
@@ -500,8 +502,11 @@ export class Orchestrator {
 
         case 'FLUSH': {
           log.success(`SKU ${effect.sku}: grouping ${effect.keys.length} photo(s)`);
+          // The donor car picked right now, not at upload time: a queued upload must not pick
+          // up a car chosen for a later part.
+          const carId = settings.load().donorCarId || null;
           for (const key of effect.keys) {
-            await db.updatePhoto(key, { sku: effect.sku, status: db.STATUS.GROUPED });
+            await db.updatePhoto(key, { sku: effect.sku, status: db.STATUS.GROUPED, carId });
           }
           this.stats.lastSku = effect.sku;
           this.stats.lastSkuAt = Date.now();
@@ -606,7 +611,7 @@ export class Orchestrator {
    */
   async manualGroup(dcfKeys, sku) {
     for (const key of dcfKeys) {
-      await db.updatePhoto(key, { sku, status: db.STATUS.GROUPED, error: null });
+      await db.updatePhoto(key, { sku, status: db.STATUS.GROUPED, error: null, carId: settings.load().donorCarId || null });
     }
     const set = new Set(dcfKeys);
     this.groupingState = {

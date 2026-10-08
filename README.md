@@ -42,7 +42,7 @@ banners with the one button that fixes them; **Help** in the top bar has the
 troubleshooting guide. Counters and the activity log live under *Technical
 details*, and everything beyond the essentials under *Settings → Advanced*.
 
-Test suite: `http://<lan-ip>:8000/tests.html` — 143 tests, ~2s.
+Test suite: `http://<lan-ip>:8000/tests.html` — 172 tests, ~2s.
 
 Requirements: Python 3.9+ with Pillow (fixtures/golden image only). The app
 itself has **no build step and no dependencies** — plain ES modules. Optional:
@@ -196,6 +196,7 @@ src/core/             pure, testable, no DOM
   blobstore.js        OPFS with an IndexedDB fallback              §5.3
   settings.js         persisted settings + backend URL rules       §4, §7
   log.js              activity log + event bus                     §7
+  quality.js          photo checks: sharpness, exposure, count
 
 src/worker/
   imaging.worker.js   decode · watermark · barcode · encode        §5.4
@@ -393,6 +394,32 @@ which usually means a misread label) and how each uploaded draft is doing
 have their own rate-limit budget on the backend, so they can't starve uploads,
 and nothing in the shooting flow waits on them. **Open in Inventory** links go to
 `<site>/listings?id=<draftId>`.
+
+### Donor car, photo checks and "shoot next"
+
+**Parting out** (top of the Shoot tab) is the donor car the parts come from,
+picked once per car from `GET /api/watermark/cars`. Each part is stamped with
+it when its label is read — not at upload time, so a queued upload never picks
+up a car chosen for a later part — and sent as `carId` with `/drafts`. The
+backend links the item to that car only if it has none yet. Listing titles
+(year/make/model), the pull list and the donor reports in Inventory need it.
+
+**Photo checks** run in the worker on every frame before the watermark goes on
+(`src/core/quality.js`, ~1200 px copy): sharpness is the 90th-percentile tile of
+a Laplacian variance (the plain backdrop is smooth whether or not the lens
+focused, so a whole-frame score would call every product shot blurry), plus
+mean brightness and blown-out fraction. Thresholds were calibrated on real R50
+frames; the numbers are in the file. Each recent part lists blurry, dark or
+overexposed photos by name, and parts with fewer than 8 photos (the label shot
+is not judged and not counted).
+
+**Shoot next.** Once OpenClaw has analyzed a draft, `/watermark/drafts/:id`
+carries `analysis.summary`: the part number (and whether it is confirmed), what
+the photos show when there is no number, damage it thinks it saw, and `hints`
+— what to photograph while the part is still on the bench ("No part number
+found — shoot the stamp close up", "Part number … read only once", "Possible
+damage …"). Shooting those and then the SKU label again appends the photos to
+the same draft, and the backend analyzes it again.
 
 ### Foreground-only (§5.2)
 

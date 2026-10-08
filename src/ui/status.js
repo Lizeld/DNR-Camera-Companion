@@ -18,6 +18,7 @@ import * as db from '../core/db.js';
 import * as blobstore from '../core/blobstore.js';
 import { history, onLog, clear as clearLog, formatClock, relativeTime, formatBytes, on as onBus, log } from '../core/log.js';
 import { pendingSeverity } from '../core/grouping.js';
+import { partNotes } from '../core/quality.js';
 
 let autoScroll = true;
 let logEl;
@@ -210,8 +211,11 @@ export function initStatus(opts = {}) {
     progress.set(sku, { done, total });
     scheduleParts();
   });
-  onBus('upload:done', ({ sku }) => {
+  onBus('upload:done', ({ sku, draftId, images }) => {
     progress.delete(sku);
+    // Photos were added (a reshoot): the draft is being analyzed again, so the
+    // old answer — and its "shoot next" hints — must not linger for minutes.
+    if (draftId && images) peeked.delete(`draft:${draftId}`);
     scheduleParts();
     void refreshBanners();
   });
@@ -600,6 +604,48 @@ async function partRow({ sku, photos, at }) {
     body.append(item);
   }
   body.append(meta);
+
+  // Photo checks done on this device: too few photos, blurry, badly exposed.
+  // Only for photos measured by this version (older records have no quality).
+  if (photos.some((p) => p.quality)) {
+    for (const note of partNotes(photos)) {
+      const el = document.createElement('div');
+      el.className = 'part-warn';
+      el.textContent = `⚠ ${note}`;
+      body.append(el);
+    }
+  }
+
+  // What OpenClaw found, and what to shoot while the part is still here.
+  const draftKey = state.kind === 'done' && state.draftId ? `draft:${state.draftId}` : null;
+  const pending = (v) => v && ANALYSIS_PENDING.has(v.analysis?.status);
+  const draft = draftKey
+    ? peek(draftKey, pending(peeked.get(draftKey)?.value) ? 20 * 1000 : 5 * 60 * 1000, () =>
+        inventory.draftInfo(state.draftId, { fresh: true }))
+    : undefined;
+  const found = draft?.isDraft ? draft.analysis?.summary : null;
+  if (found) {
+    const what = foundLine(found);
+    if (what) {
+      const el = document.createElement('div');
+      el.className = 'part-found';
+      el.textContent = what;
+      body.append(el);
+    }
+    if (found.hints?.length) {
+      for (const hint of found.hints) {
+        const el = document.createElement('div');
+        el.className = 'part-hint';
+        el.textContent = `Shoot next: ${hint.text}`;
+        body.append(el);
+      }
+      const how = document.createElement('div');
+      how.className = 'part-hint-how';
+      how.textContent = `Shoot it, then this SKU label (${sku}) again — the new photos are added to this draft and checked again.`;
+      body.append(how);
+    }
+  }
+
   if (state.kind === 'failed' && state.error) {
     const err = document.createElement('div');
     err.className = 'part-error';
@@ -614,11 +660,7 @@ async function partRow({ sku, photos, at }) {
   chip.className = `status-chip chip-${state.kind}`;
   chip.textContent = state.kind === 'done' ? `✓ ${state.label}` : state.label;
   status.append(chip);
-  if (state.kind === 'done' && state.draftId) {
-    const pending = (v) => v && ANALYSIS_PENDING.has(v.analysis?.status);
-    const key = `draft:${state.draftId}`;
-    const ttl = pending(peeked.get(key)?.value) ? 20 * 1000 : 5 * 60 * 1000;
-    const draft = peek(key, ttl, () => inventory.draftInfo(state.draftId, { fresh: true }));
+  if (draftKey) {
     const note = draftNote(draft);
     if (note) {
       const el = document.createElement('div');
@@ -667,6 +709,20 @@ async function partRow({ sku, photos, at }) {
 
   row.append(thumb, body, status, actions);
   return row;
+}
+
+/** "Interior Door Handle Bezel (right) · no part number · ~$19.95 by name" */
+function foundLine(summary) {
+  const bits = [];
+  if (summary.identified?.name) {
+    const side = summary.identified.side ? ` (${summary.identified.side})` : '';
+    const unsure = summary.identified.confidence === 'high' ? '' : '?';
+    bits.push(`${summary.identified.name}${side}${unsure}`);
+  }
+  if (summary.partNumber) bits.push(`PN ${summary.partNumber.value}${summary.partNumber.strong ? ' ✓' : ' (unconfirmed)'}`);
+  else bits.push('no part number');
+  if (summary.condition?.issues?.length) bits.push(`check: ${summary.condition.issues.join('; ')}`);
+  return bits.length ? bits.join(' · ') : null;
 }
 
 /** One line on what Inventory has done with an uploaded draft since. */

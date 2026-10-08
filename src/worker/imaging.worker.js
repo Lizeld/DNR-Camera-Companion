@@ -14,6 +14,7 @@
 import { renderWatermark, encodeJpeg, DEFAULTS as WM_DEFAULTS } from '../core/watermark.js';
 import { detectSku, cropForOcr } from '../core/barcode.js';
 import { readExifOrientation, toLandscape } from '../core/orientation.js';
+import { measure, MEASURE_WIDTH } from '../core/quality.js';
 
 /** Reused across every photo. Resized in place by renderWatermark. */
 let frameCanvas = null;
@@ -22,6 +23,8 @@ let scanCanvas = null;
 /** Reused canvas for turning a portrait frame landscape. Full size, so it is
  * released alongside frameCanvas after every run. */
 let rotateCanvas = null;
+/** Reused downscaled canvas for the photo checks (sharpness, exposure). */
+let qualityCanvas = null;
 /** The watermark, decoded once at init and kept — it is small (796x854). */
 let watermarkBitmap = null;
 
@@ -29,6 +32,29 @@ function ensureCanvases() {
   if (!frameCanvas) frameCanvas = new OffscreenCanvas(1, 1);
   if (!scanCanvas) scanCanvas = new OffscreenCanvas(1, 1);
   if (!rotateCanvas) rotateCanvas = new OffscreenCanvas(1, 1);
+  if (!qualityCanvas) qualityCanvas = new OffscreenCanvas(1, 1);
+}
+
+/**
+ * Sharpness and exposure of the frame, measured on a downscaled copy before
+ * the watermark goes on (its logo edges would read as "sharp"). Best effort:
+ * a failure here must never cost the photo.
+ */
+function measureQuality(frame) {
+  try {
+    const w = Math.min(MEASURE_WIDTH, frame.width);
+    const h = Math.max(1, Math.round((frame.height * w) / frame.width));
+    qualityCanvas.width = w;
+    qualityCanvas.height = h;
+    const ctx = qualityCanvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(frame, 0, 0, w, h);
+    return measure(ctx.getImageData(0, 0, w, h));
+  } catch {
+    return null;
+  } finally {
+    qualityCanvas.width = 1;
+    qualityCanvas.height = 1;
+  }
 }
 
 /** Drop the big canvas backing stores after a run so they are not held idle. */
@@ -105,6 +131,9 @@ async function processPhoto(job) {
     }
     const scannedAt = performance.now();
 
+    const quality = measureQuality(frame);
+    const measuredAt = performance.now();
+
     renderWatermark(
       frame,
       watermarkBitmap,
@@ -130,6 +159,7 @@ async function processPhoto(job) {
       skuBoosted: detection.boosted,
       ocrCrops,
       ocrSymbols: detection.ocrRegion?.symbols ?? 0,
+      quality,
       rotated: oriented.rotated,
       width,
       height,
@@ -137,7 +167,8 @@ async function processPhoto(job) {
         decodeMs: Math.round(decodedAt - t0),
         rotateMs: Math.round(orientedAt - decodedAt),
         barcodeMs: Math.round(scannedAt - orientedAt),
-        renderMs: Math.round(renderedAt - scannedAt),
+        qualityMs: Math.round(measuredAt - scannedAt),
+        renderMs: Math.round(renderedAt - measuredAt),
         encodeMs: Math.round(encodedAt - renderedAt),
         totalMs: Math.round(encodedAt - t0),
       },

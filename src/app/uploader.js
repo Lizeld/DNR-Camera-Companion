@@ -125,9 +125,11 @@ export async function putToS3(uploadUrl, blob, contentType, signal) {
 }
 
 /** @returns {Promise<{draftId:string}>} */
-export async function createDraft(sku, images, s = settings.load(), signal, appendTo = null) {
+export async function createDraft(sku, images, s = settings.load(), signal, appendTo = null, carId = null) {
   const api = settings.backendApiBase(s);
   const body = appendTo ? { sku, images, draftId: String(appendTo) } : { sku, images };
+  // The backend links the car to the part only if it has none yet; older backends ignore it.
+  if (carId) body.carId = String(carId);
   const res = await postJson(`${api}/drafts`, body, s, signal);
   if (!res?.draftId) throw new UploadError('drafts response missing draftId', { body: JSON.stringify(res) });
   return res;
@@ -244,7 +246,8 @@ export async function uploadSku(sku, opts = {}) {
     .sort((a, b) => (a.sequenceNumber ?? 0) - (b.sequenceNumber ?? 0))
     .map((p) => p.publicUrl);
 
-  const { draftId, appended } = await createDraft(sku, images, s, signal, appendTo);
+  const carId = sending.find((p) => p.carId)?.carId ?? current.find((p) => p.carId)?.carId ?? null;
+  const { draftId, appended } = await createDraft(sku, images, s, signal, appendTo, carId);
   if (appended) log.success(`Added ${images.length} photo(s) to the existing draft for SKU ${sku}`, draftId);
   else if (appendTo) log.success(`Draft ${appendTo} for SKU ${sku} is no longer open — created a new draft (${images.length} images)`, draftId);
   else log.success(`Draft created for SKU ${sku} (${images.length} images)`, draftId);

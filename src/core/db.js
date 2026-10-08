@@ -79,6 +79,9 @@ function wrap(request) {
  * @property {number} [width]
  * @property {number} [height]
  * @property {number} [bytes]
+ * @property {{sharpness:number, brightness:number, clipped:number}|null} [quality]
+ * @property {boolean} [isLabel]
+ * @property {string|null} [carId]
  */
 
 /** @returns {Photo} */
@@ -99,6 +102,12 @@ export function makePhoto(fields) {
     width: fields.width ?? null,
     height: fields.height ?? null,
     bytes: fields.bytes ?? null,
+    /** Sharpness/exposure from the worker (core/quality.js), or null. */
+    quality: fields.quality ?? null,
+    /** This is the SKU label shot (not judged, not counted as a part photo). */
+    isLabel: Boolean(fields.isLabel),
+    /** Donor car picked on the Shoot tab when the part was grouped, or null. */
+    carId: fields.carId ?? null,
   };
 }
 

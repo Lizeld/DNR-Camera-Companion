@@ -24,6 +24,9 @@ export const DEFAULTS = Object.freeze({
   autoUpload: true,
   /** Read the printed digits (Tesseract via serve.py) when a label's barcode won't decode. */
   ocrFallback: true,
+  /** Donor car being parted out (Shoot tab): sent with each part so Inventory knows its car. */
+  donorCarId: '',
+  donorCarName: '',
 });
 
 let cache = null;
@@ -44,7 +47,7 @@ function coerce(raw) {
   for (const k of ['verboseErrors', 'keepScreenAwake', 'notifications', 'autoUpload', 'ocrFallback']) {
     s[k] = Boolean(s[k]);
   }
-  for (const k of ['cameraUrl', 'backendUrl', 'backendToken', 'keyPrefix']) {
+  for (const k of ['cameraUrl', 'backendUrl', 'backendToken', 'keyPrefix', 'donorCarId', 'donorCarName']) {
     s[k] = String(s[k] ?? '');
   }
   return s;

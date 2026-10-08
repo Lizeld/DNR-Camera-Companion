@@ -96,9 +96,10 @@ export function describeItem(lookup) {
 }
 
 /**
- * A draft's current state, incl. OpenClaw analysis.
+ * A draft's current state, incl. OpenClaw analysis. `analysis.summary` (newer
+ * backends, once done): what was found and `hints` — what to shoot next.
  * @returns {Promise<null|{id:string, title:string|null, partNumber:string|null, price:number|null,
- *   imageCount:number, isDraft:boolean, analysis:null|{status:string, error:string|null}}>}
+ *   imageCount:number, isDraft:boolean, analysis:null|{status:string, error:string|null, summary?:object|null}}>}
  */
 export function draftInfo(draftId, { fresh = false } = {}) {
   if (!draftId) return Promise.resolve(null);
@@ -107,6 +108,17 @@ export function draftInfo(draftId, { fresh = false } = {}) {
     const { status, body } = await getJson(`/watermark/drafts/${encodeURIComponent(draftId)}`);
     return status === 200 ? body : null;
   });
+}
+
+/**
+ * Donor cars for the Shoot tab's "Parting out" picker, the car with the most
+ * recent parts first. Not cached: it is asked for when the picker opens.
+ * @returns {Promise<null|Array<{id:string, name:string, vin6:string|null, parts:number}>>}
+ *   null when the backend is unreachable or predates the endpoint
+ */
+export async function listCars(q = '') {
+  const { status, body } = await getJson(`/watermark/cars${q ? `?q=${encodeURIComponent(q)}` : ''}`);
+  return status === 200 && Array.isArray(body?.cars) ? body.cars : null;
 }
 
 /** Link that opens a draft in the Inventory site's listing editor. */

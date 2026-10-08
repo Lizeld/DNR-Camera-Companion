@@ -5,6 +5,7 @@
 
 import { $, $$, on, toast } from './ui/dom.js';
 import { initStatus, reportBackgrounded } from './ui/status.js';
+import { initDonor } from './ui/donor.js';
 import { initGallery, onGalleryShown, setFilter as setGalleryFilter, render as renderGallery } from './ui/gallery.js';
 import { initCameraBrowser, onCameraShown } from './ui/camera.js';
 import { initSettings, onSettingsShown } from './ui/settings-ui.js';
@@ -94,6 +95,7 @@ async function boot() {
   initTabs();
   initDialogs();
   initStatus({ navigate });
+  initDonor();
   initGallery();
   initCameraBrowser();
   initSettings();
