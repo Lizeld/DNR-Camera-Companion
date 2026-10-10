@@ -427,6 +427,70 @@ export async function probeCamera(baseUrl, { timeoutMs = 1500, signal } = {}) {
 }
 
 /**
+ * Ask the serving machine to (re-)enable the camera's CORS for this origin.
+ *
+ * The browser cannot do this itself — the CORS endpoints are subject to CORS —
+ * but serve.py can, and a same-origin POST to it is not. The camera drops its
+ * CORS enable on every power cycle; serve.py's keeper restores it on a timer,
+ * and this closes the gap between a wake-up and the keeper's next tick.
+ *
+ * Never throws. `available: false` means no serve.py camera route answered
+ * (static hosting, or the server was started without --camera).
+ *
+ * @returns {Promise<{ok:boolean, available:boolean, message:string}>}
+ */
+export async function requestCorsRepair(baseUrl, { timeoutMs = 8000, signal } = {}) {
+  if (typeof location === 'undefined' || !/^https?:$/.test(location.protocol)) {
+    return { ok: false, available: false, message: 'not served over HTTP' };
+  }
+  let camera = null;
+  try {
+    camera = new URL(baseUrl).hostname;
+  } catch { /* let the server use its own camera */ }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const onAbort = () => controller.abort();
+  signal?.addEventListener('abort', onAbort, { once: true });
+  try {
+    const res = await fetch('/camera/cors', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ camera }),
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    let doc = null;
+    try {
+      doc = await res.json();
+    } catch { /* not serve.py */ }
+    if (!doc || typeof doc.ok !== 'boolean') {
+      return { ok: false, available: false, message: `no camera route on this server (HTTP ${res.status})` };
+    }
+    // no_camera: serve.py is running but was not given --camera.
+    return { ok: doc.ok, available: doc.error !== 'no_camera', message: doc.message ?? '' };
+  } catch (err) {
+    return { ok: false, available: false, message: err.name === 'AbortError' ? 'timeout' : err.message };
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+let lastRepairAt = 0;
+
+/**
+ * Fire-and-forget repair for the ingest loop: when the camera stops answering
+ * readably, ask serve.py to re-apply CORS, at most once per `minGapMs`.
+ */
+export function nudgeCorsRepair(baseUrl, { minGapMs = 10000 } = {}) {
+  const now = Date.now();
+  if (now - lastRepairAt < minGapMs) return;
+  lastRepairAt = now;
+  void requestCorsRepair(baseUrl);
+}
+
+/**
  * Layered connection diagnosis.
  *
  * A plain `fetch()` failure is uninformative: "host unreachable" and "host
@@ -440,7 +504,7 @@ export async function probeCamera(baseUrl, { timeoutMs = 1500, signal } = {}) {
  */
 export async function diagnoseCamera(input, { timeoutMs = 6000 } = {}) {
   const baseUrl = normaliseCameraUrl(input);
-  const probe = { baseUrl, opaque: null, cors: null, mixedContent: false };
+  const probe = { baseUrl, opaque: null, cors: null, repair: null, mixedContent: false };
 
   if (!baseUrl) {
     return {
@@ -491,8 +555,18 @@ export async function diagnoseCamera(input, { timeoutMs = 6000 } = {}) {
   );
 
   // Step 2 — can we actually read the response?
-  const corsResult = await probeCamera(baseUrl, { timeoutMs });
+  let corsResult = await probeCamera(baseUrl, { timeoutMs });
   probe.cors = corsResult;
+
+  // Step 2b — reachable but refused: have the serving machine fix it, then
+  // look again. Usually the camera just woke up and dropped its CORS enable.
+  if (!corsResult.ok && probe.opaque.ok) {
+    probe.repair = await requestCorsRepair(baseUrl);
+    if (probe.repair.ok) {
+      corsResult = await probeCamera(baseUrl, { timeoutMs });
+      probe.cors = corsResult;
+    }
+  }
 
   if (corsResult.ok) {
     return {
@@ -508,7 +582,12 @@ export async function diagnoseCamera(input, { timeoutMs = 6000 } = {}) {
   }
 
   if (probe.opaque.ok) {
-    // The camera answered; the browser refused to hand us the response.
+    // The camera answered; the browser refused to hand us the response, and
+    // the serving machine could not (or was not set up to) fix that.
+    const repair = probe.repair;
+    const repairStep = repair?.available
+      ? `This app's server tried to enable it and failed: ${repair.message}`
+      : 'Start the server with  python serve.py --camera <camera-ip>  and it will do this automatically.';
     return {
       verdict: 'cors',
       headline: 'The camera is reachable, but it has not been told to allow this origin.',
@@ -521,8 +600,10 @@ export async function diagnoseCamera(input, { timeoutMs = 6000 } = {}) {
         'perform the first enable. Run this on the machine serving the app:',
         `    python tools/camera_probe.py allow ${new URL(baseUrl).hostname} ${location.origin}`,
         'Or set the allowed origin from the camera menu (connection setup), then reload.',
+        repairStep,
       ],
-      detail: `opaque probe OK in ${probe.opaque.ms}ms; CORS read failed: ${corsResult.error}`,
+      detail: `opaque probe OK in ${probe.opaque.ms}ms; CORS read failed: ${corsResult.error}`
+        + (repair ? `\nserver repair: ${repair.available ? (repair.ok ? 'ok' : 'failed') : 'unavailable'} — ${repair.message}` : ''),
       probe,
     };
   }

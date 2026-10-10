@@ -18,7 +18,7 @@
  *     request at a time and 503s the loser
  */
 
-import { CcapiClient, CcapiError } from '../core/ccapi.js';
+import { CcapiClient, CcapiError, nudgeCorsRepair } from '../core/ccapi.js';
 import { dcfKey, fileNameOf, sequenceNumber, tryDcfKey } from '../core/dcf.js';
 import * as grouping from '../core/grouping.js';
 import * as db from '../core/db.js';
@@ -139,6 +139,7 @@ export class Orchestrator {
       this.setConnection(CONNECTION.ERROR);
       this.stats.lastError = err.message;
       log.error('CCAPI discovery failed — check the camera URL, Wi-Fi, and CORS (§3.6/§5.1)', err.message);
+      nudgeCorsRepair(this.client.baseUrl);
       // Keep the loop running: the camera may simply be asleep.
     }
 
@@ -211,6 +212,8 @@ export class Orchestrator {
         this.stats.lastError = err.message;
         this.setConnection(CONNECTION.ERROR);
         log.error('Ingest cycle failed', settings.load().verboseErrors ? err : err.message);
+        // A camera wake-up drops its CORS enable; get serve.py to restore it now.
+        if (this.client) nudgeCorsRepair(this.client.baseUrl);
       }
       this.stats.lastCycleMs = Date.now() - started;
       fire('stats:changed', this.snapshot());

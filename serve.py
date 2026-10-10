@@ -38,6 +38,10 @@ periodically, re-enabling within seconds of the camera waking up. Point it at a
 different machine and it registers that machine's address instead, so moving
 the app costs nothing.
 
+The app can also ask for it on demand: when it finds the camera reachable but
+refusing its origin, it POSTs /camera/cors (same-origin, so CORS does not apply)
+and this server re-applies the config immediately for that page's origin.
+
 --- The backend proxy ---
 
 The same LAN origin that makes the camera reachable makes the *upload* backend
@@ -97,7 +101,7 @@ for stream in (sys.stdout, sys.stderr):
 import ccapi_lite  # noqa: E402  (path is set immediately above)
 
 CONFIG_PATH = ROOT / ".dnr-serve.json"
-KEEPER_INTERVAL_SECONDS = 20
+KEEPER_INTERVAL_SECONDS = 10
 
 PROXY_PREFIX = "/backend"
 JSON_TIMEOUT_SECONDS = 30
@@ -115,6 +119,7 @@ SKU_TOKEN = re.compile(r"(?<!\d)\d{7}(?!\d)")
 # Set in main() when --backend is given; read by every Handler instance.
 PROXY: BackendProxy | None = None
 CAMERA: str | None = None  # the camera this server keeps CORS alive for, if any
+KEEPER: "CorsKeeper | None" = None  # set in main() alongside CAMERA
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -267,6 +272,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path == "/ocr/sku":
             return self._ocr_sku()
+        if path == "/camera/cors":
+            return self._camera_cors()
         if path.startswith(f"{PROXY_PREFIX}/api/"):
             return self._proxy_json(path[len(f"{PROXY_PREFIX}/api/"):])
         self._send_json(405, {"error": "method_not_allowed",
@@ -332,6 +339,58 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "proxy": True,
             "api": f"{PROXY_PREFIX}/api",
             "upstream": PROXY.upstream,
+        })
+
+    # -- camera CORS on demand ---------------------------------------------
+
+    def _camera_cors(self):
+        """Re-apply the camera's CORS config now, for the origin asking.
+
+        The browser cannot do the first enable itself (the CORS endpoints are
+        subject to CORS), but it can ask this same-origin server to. The app
+        calls this when it finds the camera reachable but refusing its origin —
+        typically just after a camera wake-up, before the keeper's next tick.
+
+        Only the page's own origin is accepted: `Origin` must equal
+        http://<Host>, i.e. a page this server actually served under that
+        name. The keeper then adopts it, so a tablet that reaches this machine
+        by hostname keeps working without --allow-origin."""
+        keeper = KEEPER
+        if keeper is None:
+            return self._send_json(409, {
+                "ok": False, "error": "no_camera",
+                "message": "This server is not keeping a camera's CORS alive. Restart it "
+                           "as: python serve.py --camera <camera-ip>",
+            })
+
+        host = self.headers.get("Host") or ""
+        origin = (self.headers.get("Origin") or "").rstrip("/")
+        if not host or origin != f"http://{host}":
+            return self._send_json(403, {
+                "ok": False, "error": "origin_mismatch",
+                "message": f"Origin {origin or '(none)'} is not this server's page origin "
+                           f"http://{host}",
+            })
+
+        body = self._read_body() or b""
+        try:
+            wanted = json.loads(body or b"{}").get("camera")
+        except (json.JSONDecodeError, AttributeError):
+            wanted = None
+        if wanted and wanted != keeper.host:
+            return self._send_json(409, {
+                "ok": False, "error": "camera_mismatch",
+                "message": f"The app is set to camera {wanted}, but this server manages "
+                           f"{keeper.host}. Fix Settings > Camera, or restart as: "
+                           f"python serve.py --camera {wanted}",
+            })
+
+        keeper.origin = origin
+        result = keeper.apply_once()
+        self._send_json(200 if result["ok"] else 502, {
+            "ok": result["ok"], "camera": keeper.host, "origin": origin,
+            "changed": result.get("changed", []),
+            "message": result.get("message", ""),
         })
 
     def _proxy_json(self, endpoint: str):
@@ -469,6 +528,8 @@ class CorsKeeper(threading.Thread):
         self.origin = origin
         self.interval = interval
         self.stop_event = threading.Event()
+        # The periodic tick and an on-demand POST /camera/cors can overlap.
+        self.lock = threading.Lock()
         # Only report transitions; a line every 20s would bury the access log.
         self.last_state: str | None = None
 
@@ -477,12 +538,17 @@ class CorsKeeper(threading.Thread):
             print(f"  [cors] {message}")
             self.last_state = state
 
-    def apply_once(self) -> bool:
+    def apply_once(self) -> dict:
+        """@returns {'ok': bool, 'changed': [str], 'message': str}"""
+        with self.lock:
+            return self._apply_locked()
+
+    def _apply_locked(self) -> dict:
         report = ccapi_lite.find_ccapi(self.host, timeout=2.0)
         if not report["base"]:
-            self.announce("unreachable",
-                          f"camera {self.host} not responding (asleep or off network) — will retry")
-            return False
+            message = f"camera {self.host} not responding (asleep or off network) — will retry"
+            self.announce("unreachable", message)
+            return {"ok": False, "changed": [], "message": message}
 
         result = ccapi_lite.ensure_cors(report["base"], report["endpoints"], self.origin)
         if result["ok"]:
@@ -494,12 +560,13 @@ class CorsKeeper(threading.Thread):
                 self.last_state = "ok"
             else:
                 self.announce("ok", f"camera already accepts {self.origin}")
-            return True
+            return {"ok": True, "changed": result["changed"],
+                    "message": f"camera accepts {self.origin}"}
 
-        self.announce("failed",
-                      f"could not configure CORS on {self.host}: "
-                      f"{'; '.join(result['errors']) or 'unknown'}")
-        return False
+        message = (f"could not configure CORS on {self.host}: "
+                   f"{'; '.join(result['errors']) or 'unknown'}")
+        self.announce("failed", message)
+        return {"ok": False, "changed": result["changed"], "message": message}
 
     def run(self):
         while not self.stop_event.is_set():
@@ -596,6 +663,8 @@ def main(argv: list[str]) -> int:
     if camera:
         print(f"  CORS keeper: camera {camera}, origin {origin}")
         keeper = CorsKeeper(camera, origin)
+        global KEEPER
+        KEEPER = keeper
         keeper.apply_once()          # register before the first page load
         keeper.start()               # then re-apply after every camera wake-up
         print(f"  Open the app at {origin} — that exact URL, on every device.")
